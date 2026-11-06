@@ -20,11 +20,20 @@ function rgbaBytes(width, height, mipmaps) {
     return pixels * 4n;
 }
 
+function sameEntry(before, after) {
+    return before.dev === after.dev && before.ino === after.ino && before.size === after.size
+        && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
+}
+
 function checkFileUnchanged(before, after) {
-    if (!after.isFile() || ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs'].some(
-        field => before[field] !== after[field]
-    )) {
+    if (!after.isFile() || !sameEntry(before, after)) {
         throw new Error('File changed while it was being read.');
+    }
+}
+
+function checkDirectoryUnchanged(before, after, path) {
+    if (!after.isDirectory() || !sameEntry(before, after)) {
+        throw new Error(`Directory ${JSON.stringify(path || '.')} changed while it was being scanned.`);
     }
 }
 
@@ -47,8 +56,9 @@ async function inspectFile(location, path, stat, mipmaps) {
     }
 }
 
-async function* walkTextures(directory, parentPath = '') {
+async function* walkTextures(directory, directoryStat, parentPath = '') {
     const entries = await readdir(directory, { withFileTypes: true, encoding: 'buffer' });
+    checkDirectoryUnchanged(directoryStat, await lstat(directory, statOptions), parentPath);
     for (const entry of entries) {
         const name = entry.name.toString('utf8');
         if (!Buffer.from(name).equals(entry.name)) {
@@ -64,11 +74,12 @@ async function* walkTextures(directory, parentPath = '') {
         if (stat.isSymbolicLink()) {
             yield { location, path, stat };
         } else if (stat.isDirectory()) {
-            yield* walkTextures(location, path);
+            yield* walkTextures(location, stat, path);
         } else if (imageExtension) {
             yield { location, path, stat };
         }
     }
+    checkDirectoryUnchanged(directoryStat, await lstat(directory, statOptions), parentPath);
 }
 
 function comparePaths(a, b) {
@@ -76,7 +87,8 @@ function comparePaths(a, b) {
 }
 
 export async function scanTextures(root, { mipmaps = false, maxEdge = null, maxTotalMiB = null } = {}) {
-    if (!(await lstat(root)).isDirectory()) {
+    const rootStat = await lstat(root, statOptions);
+    if (!rootStat.isDirectory()) {
         throw new Error('The scan root must be a regular directory.');
     }
     const files = [];
@@ -86,7 +98,7 @@ export async function scanTextures(root, { mipmaps = false, maxEdge = null, maxT
     let diskBytes = 0n;
     let estimatedBytes = 0n;
 
-    for await (const { location, path, stat } of walkTextures(root)) {
+    for await (const { location, path, stat } of walkTextures(root, rootStat)) {
         if (stat.isSymbolicLink()) {
             skippedLinks.push(path);
             continue;
