@@ -14,13 +14,15 @@ function hundredths(value, divisor) {
     return `${integers.format(rounded / 100n)}.${fraction}`;
 }
 
-function sizeLabel(value) {
-    const bytes = BigInt(value);
-    const exact = `${integers.format(bytes)} ${bytes === 1n ? 'byte' : 'bytes'}`;
+function sizeLabel(value, signed = false) {
+    const amount = BigInt(value);
+    const bytes = amount < 0n ? -amount : amount;
+    const sign = amount < 0n ? '-' : signed && amount > 0n ? '+' : '';
+    const exact = `${sign}${integers.format(bytes)} ${bytes === 1n ? 'byte' : 'bytes'}`;
     if (bytes < bytesPerKiB) return exact;
     const mib = bytes >= bytesPerMiB;
     const size = hundredths(bytes, mib ? bytesPerMiB : bytesPerKiB);
-    return `${size} ${mib ? 'MiB' : 'KiB'}<small>${exact}</small>`;
+    return `${sign}${size} ${mib ? 'MiB' : 'KiB'}<small>${exact}</small>`;
 }
 
 const styles = `
@@ -59,6 +61,9 @@ const styles = `
     small { display: block; font-size: .8rem; font-weight: 400; white-space: nowrap; }
     ul { margin: .4rem 0 0; padding-inline-start: 1.4rem; }
     li + li { margin-top: .3rem; }
+    details { margin-top: .55rem; }
+    details summary { cursor: pointer; font-weight: 600; }
+    .baseline-totals { display: flex; flex-wrap: wrap; gap: 1rem 2rem; margin: .5rem 0; }
     .flag {
         display: inline-block; border-radius: .35rem; padding: .08rem .45rem;
         background: var(--warning-bg); color: var(--warning); font-weight: 650; font-size: .8rem;
@@ -100,8 +105,40 @@ const styles = `
     }
 `;
 
+function listPaths(paths) {
+    return paths.map(path => `<li><code><bdi>${escapeHtml(path)}</bdi></code></li>`).join('');
+}
+
+function renderBaseline(baseline) {
+    if (!baseline) return '';
+    const growth = baseline.maxGrowthMiB === null ? '' : `
+        <p>Growth limit <strong>${integers.format(baseline.maxGrowthMiB)} MiB</strong>
+            <span class="${baseline.growthExceeded ? 'flag' : 'note'}">${baseline.growthExceeded ? 'Exceeded' : 'Within budget'}</span>
+        </p>`;
+    const changes = baseline.changed.map(({ path, deltaRgbaBytes }) =>
+        `<li><code><bdi>${escapeHtml(path)}</bdi></code> · ${sizeLabel(deltaRgbaBytes, true)}</li>`
+    ).join('');
+    const details = [
+        ['Added images', baseline.added.length, listPaths(baseline.added)],
+        ['Removed images', baseline.removed.length, listPaths(baseline.removed)],
+        ['Changed estimates', baseline.changed.length, changes],
+    ].filter(([, count]) => count > 0).map(([label, count, items]) =>
+        `<details><summary>${label} (${integers.format(count)})</summary><ul>${items}</ul></details>`
+    ).join('');
+    return `
+    <section aria-labelledby="baseline">
+        <h2 id="baseline">Baseline comparison</h2>
+        <dl class="baseline-totals">
+            <div><dt>Previous RGBA8</dt><dd>${sizeLabel(baseline.previousRgbaBytes)}</dd></div>
+            <div><dt>Change</dt><dd>${sizeLabel(baseline.deltaRgbaBytes, true)}</dd></div>
+        </dl>
+        ${growth}
+        ${details || '<p class="note">No image budget changes.</p>'}
+    </section>`;
+}
+
 export function renderHtmlReport(report) {
-    const { files, totals, limits, exceeded, invalid, skippedLinks, mipmaps } = report;
+    const { files, totals, limits, exceeded, invalid, skippedLinks, mipmaps, baseline } = report;
     const maxBytes = BigInt(files[0]?.rgbaBytes ?? 0);
     const overEdge = new Set(exceeded.edge);
     const rows = files.map((file, index) => {
@@ -131,7 +168,7 @@ export function renderHtmlReport(report) {
     const issues = invalid.map(({ path, error }) =>
         `<li><code><bdi>${escapeHtml(path)}</bdi></code> · ${escapeHtml(error)}</li>`
     ).join('');
-    const links = skippedLinks.map(path => `<li><code><bdi>${escapeHtml(path)}</bdi></code></li>`).join('');
+    const links = listPaths(skippedLinks);
 
     return `<!doctype html>
 <html lang="en">
@@ -158,6 +195,7 @@ export function renderHtmlReport(report) {
         <h2 id="budgets">Budgets</h2>
         ${edgeBudget || totalBudget ? `<ul>${edgeBudget}${totalBudget}</ul>` : '<p class="note">No limits supplied.</p>'}
     </section>
+    ${renderBaseline(baseline)}
     <section aria-labelledby="ranked">
         <h2 id="ranked">Ranked images</h2>
         ${rows ? `

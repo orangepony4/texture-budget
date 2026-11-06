@@ -1,0 +1,151 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+
+const cli = fileURLToPath(new URL('../bin/texture-budget.mjs', import.meta.url));
+
+async function fixture(t) {
+    const tempRoot = await realpath(tmpdir());
+    const directory = await mkdtemp(join(tempRoot, 'texture-baseline-'));
+    t.after(async () => {
+        assert.equal(dirname(await realpath(directory)), tempRoot);
+        await rm(directory, { recursive: true, force: true });
+    });
+    const folder = join(directory, 'textures');
+    const baseline = join(directory, 'before.json');
+    await mkdir(folder);
+
+    function run(status, ...flags) {
+        const output = flags.includes('--html') ? [] : ['--json'];
+        const result = spawnSync(process.execPath, [cli, folder, ...output, ...flags], {
+            cwd: directory, encoding: 'utf8', timeout: 10_000, windowsHide: true,
+        });
+        assert.ifError(result.error);
+        assert.equal(result.signal, null);
+        assert.equal(result.status, status, result.stderr || result.stdout);
+        if (status === 2) {
+            assert.equal(result.stdout, '');
+            assert.doesNotMatch(result.stderr, /Unknown option/i);
+            return result.stderr;
+        }
+        return result.stdout;
+    }
+
+    async function put(name, width, height) {
+        // SOI, single-component SOF0, EOI. Only the dimension header is inspected.
+        const bytes = Buffer.from([
+            0xff, 0xd8, 0xff, 0xc0, 0, 11, 8, 0, 0, 0, 0, 1, 1, 0x11, 0, 0xff, 0xd9,
+        ]);
+        bytes.writeUInt16BE(height, 7);
+        bytes.writeUInt16BE(width, 9);
+        await writeFile(join(folder, name), bytes);
+    }
+
+    return { baseline, folder, put, run };
+}
+
+test('compares a saved JSON report without changing the default report shape', async t => {
+    const { baseline, folder, put, run } = await fixture(t);
+    await put('unchanged.jpg', 1, 1);
+    await put('z-removed.jpg', 1, 1);
+    await put('a-removed.jpg', 3, 2);
+    await put('z-grown.jpg', 2, 2);
+    await put('a-shrunk.jpg', 4, 4);
+    const original = run(0);
+    assert.equal(Object.hasOwn(JSON.parse(original), 'baseline'), false);
+    await writeFile(baseline, original);
+
+    await rm(join(folder, 'z-removed.jpg'));
+    await rm(join(folder, 'a-removed.jpg'));
+    await put('z-added.jpg', 1, 1);
+    await put('a-added.jpg', 4, 4);
+    await put('z-grown.jpg', 4, 4);
+    await put('a-shrunk.jpg', 2, 2);
+
+    const result = JSON.parse(run(0, '--baseline', baseline));
+    assert.equal(result.totals.rgbaBytes, '152');
+    assert.deepEqual(result.baseline, {
+        previousRgbaBytes: '112',
+        deltaRgbaBytes: '40',
+        added: ['a-added.jpg', 'z-added.jpg'],
+        removed: ['a-removed.jpg', 'z-removed.jpg'],
+        changed: [
+            { path: 'a-shrunk.jpg', previousRgbaBytes: '64', currentRgbaBytes: '16', deltaRgbaBytes: '-48' },
+            { path: 'z-grown.jpg', previousRgbaBytes: '16', currentRgbaBytes: '64', deltaRgbaBytes: '48' },
+        ],
+        maxGrowthMiB: null,
+        growthExceeded: false,
+    });
+});
+
+test('allows exact growth, fails above the limit, and accepts a shrinking budget', async t => {
+    const { baseline, folder, put, run } = await fixture(t);
+    await put('base.jpg', 4, 4);
+    await writeFile(baseline, run(1, '--max-edge', '1'));
+
+    const unchanged = JSON.parse(run(0, '--baseline', baseline, '--max-growth-mib', '0'));
+    assert.equal(unchanged.baseline.deltaRgbaBytes, '0');
+    assert.equal(unchanged.baseline.maxGrowthMiB, 0);
+    assert.equal(unchanged.baseline.growthExceeded, false);
+
+    await put('new-at-limit.jpg', 512, 512);
+    const flags = ['--baseline', baseline, '--max-growth-mib', '1'];
+    const exact = JSON.parse(run(0, ...flags));
+    assert.equal(exact.baseline.deltaRgbaBytes, '1048576');
+    assert.equal(exact.baseline.maxGrowthMiB, 1);
+    assert.equal(exact.baseline.growthExceeded, false);
+
+    await put('extra.jpg', 1, 1);
+    const exceeded = JSON.parse(run(1, ...flags));
+    assert.equal(exceeded.baseline.deltaRgbaBytes, '1048580');
+    assert.equal(exceeded.baseline.growthExceeded, true);
+    assert.deepEqual(exceeded.exceeded, { edge: [], total: false });
+    const html = run(1, ...flags, '--html');
+    assert.match(html, /Baseline comparison/);
+    assert.match(html, /\+1,048,580 bytes/);
+    assert.match(html, /Growth limit <strong>1 MiB<\/strong>/);
+    assert.match(html, /Added images \(2\)/);
+
+    for (const name of ['base.jpg', 'new-at-limit.jpg', 'extra.jpg']) {
+        await rm(join(folder, name));
+    }
+    const smaller = JSON.parse(run(0, '--baseline', baseline, '--max-growth-mib', '0'));
+    assert.equal(smaller.baseline.deltaRgbaBytes, '-64');
+    assert.equal(smaller.baseline.growthExceeded, false);
+});
+
+test('rejects invalid reports, inconsistent totals, and different mipmap modes', async t => {
+    const { baseline, put, run } = await fixture(t);
+    await put('base.jpg', 4, 4);
+    const original = run(0);
+    await writeFile(baseline, original);
+    assert.match(run(2, '--baseline', baseline, '--mipmaps'), /mipmap/i);
+    run(2, '--max-growth-mib', '0');
+    run(2, '--baseline', baseline, '--max-growth-mib=-1');
+    run(2, '--baseline', baseline, '--max-growth-mib', '0.5');
+
+    await writeFile(baseline, run(0, '--mipmaps'));
+    const mipmapped = JSON.parse(run(0, '--baseline', baseline, '--mipmaps'));
+    assert.equal(mipmapped.baseline.previousRgbaBytes, '84');
+    assert.equal(mipmapped.baseline.deltaRgbaBytes, '0');
+
+    const parsed = JSON.parse(original);
+    for (const invalid of [
+        '{',
+        '{}',
+        JSON.stringify({ ...parsed, totals: { ...parsed.totals, rgbaBytes: '1' } }),
+        JSON.stringify({
+            ...parsed,
+            files: [...parsed.files, ...parsed.files],
+            totals: { ...parsed.totals, files: 2, diskBytes: '34', rgbaBytes: '128' },
+        }),
+        JSON.stringify({ ...parsed, invalid: [{ path: 'failed.png', error: 'Invalid image' }] }),
+    ]) {
+        await writeFile(baseline, invalid);
+        run(2, '--baseline', baseline);
+    }
+});

@@ -36,6 +36,17 @@ node bin/texture-budget.mjs assets --mipmaps --html > texture-report.html
 | `1` | At least one limit was exceeded or an image header could not be inspected. |
 | `2` | The command or the folder could not be processed. |
 
+## Track budget growth
+
+Save a JSON report from a known-good folder and use it as a baseline when checking a later version of the same asset folder.
+
+```sh
+node bin/texture-budget.mjs assets --mipmaps --json > texture-baseline.json
+node bin/texture-budget.mjs assets --mipmaps --baseline texture-baseline.json --max-growth-mib 8
+```
+
+Both scans must use the same mipmap mode. The baseline must contain no invalid or unreadable images. The comparison matches exact relative paths and lists added and removed images, changes in estimated bytes, and total growth. A growth limit of `0` allows no increase. Without a growth limit, differences are reported without failing the check. Use `--json` or `--html` to save the comparison.
+
 ## How the estimate works
 
 - The base level uses `width × height × 4` bytes. With `--mipmaps`, each dimension is halved and rounded down at every step, with a minimum of 1 pixel, until the chain reaches 1 × 1.
