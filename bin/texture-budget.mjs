@@ -6,11 +6,12 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { bytesPerMiB, scanTextures } from '../src/budget.mjs';
 import { compareBudgetBaseline } from '../src/baseline.mjs';
+import { groupTextures } from '../src/groups.mjs';
 import { renderHtmlReport } from '../src/report-html.mjs';
 
 const usage = `Usage:
   texture-budget <folder> [--json | --html] [--mipmaps] [--max-edge <pixels>] [--max-total-mib <MiB>]
-                          [--baseline <report.json>] [--max-growth-mib <MiB>]
+                          [--baseline <report.json>] [--max-growth-mib <MiB>] [--group-depth <levels>]
 
 Scan PNG, JPEG and WebP headers and estimate uncompressed RGBA8 texture memory.
 
@@ -20,6 +21,7 @@ Options:
   --max-total-mib <MiB>    Fail if the total estimate exceeds this budget.
   --baseline <report>     Compare with a saved JSON report.
   --max-growth-mib <MiB>   Fail if growth over the baseline exceeds this amount.
+  --group-depth <levels>  Summarize textures by parent folder depth.
   --json                  Print every file and result as JSON.
   --html                  Print a standalone HTML report.
   -h, --help              Show this help.
@@ -66,7 +68,7 @@ function formatBytes(value, signed = false) {
 }
 
 function printReport(report) {
-    const { totals, limits, exceeded, invalid, skippedLinks, files, mipmaps, baseline } = report;
+    const { totals, limits, exceeded, invalid, skippedLinks, files, mipmaps, baseline, groups, groupDepth } = report;
     const mode = mipmaps ? 'full mip chain' : 'base level';
     console.log(`Textures: ${totals.files}`);
     console.log(`Disk size: ${formatBytes(totals.diskBytes)}`);
@@ -77,6 +79,14 @@ function printReport(report) {
             console.log(`  ${JSON.stringify(file.path)}  ${file.width} x ${file.height}  ${formatBytes(file.rgbaBytes)}`);
         }
         if (files.length > 10) console.log('  Use --json for the complete file list.');
+    }
+    if (groups) {
+        console.log(`\nFolder totals (depth ${groupDepth}):`);
+        for (const group of groups.slice(0, 10)) {
+            console.log(`  ${JSON.stringify(group.path)}  ${group.files} files  ${formatBytes(group.rgbaBytes)}`);
+        }
+        if (!groups.length) console.log('  No readable images.');
+        if (groups.length > 10) console.log('  Use --json or --html for all groups.');
     }
     if (limits.maxEdge !== null) {
         console.log(`\nEdge limit (${limits.maxEdge} px): ${exceeded.edge.length} over limit`);
@@ -119,6 +129,7 @@ async function main() {
             'max-total-mib': { type: 'string' },
             baseline: { type: 'string' },
             'max-growth-mib': { type: 'string' },
+            'group-depth': { type: 'string' },
             help: { type: 'boolean', short: 'h' },
             version: { type: 'boolean', short: 'v' },
         },
@@ -147,6 +158,7 @@ async function main() {
     }
     const maxEdge = parseLimit(values['max-edge'], '--max-edge');
     const maxTotalMiB = parseLimit(values['max-total-mib'], '--max-total-mib');
+    const groupDepth = parseLimit(values['group-depth'], '--group-depth');
     const previous = values.baseline === undefined ? undefined : await readBaseline(resolve(values.baseline));
     const report = await scanTextures(resolve(positionals[0]), {
         mipmaps: values.mipmaps ?? false,
@@ -155,6 +167,10 @@ async function main() {
     });
     if (values.baseline !== undefined) {
         report.baseline = compareBudgetBaseline(previous, report, { maxGrowthMiB });
+    }
+    if (groupDepth !== null) {
+        report.groupDepth = groupDepth;
+        report.groups = groupTextures(report.files, groupDepth);
     }
     if (values.json) {
         console.log(JSON.stringify(report, null, 2));

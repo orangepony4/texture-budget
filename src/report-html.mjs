@@ -137,8 +137,38 @@ function renderBaseline(baseline) {
     </section>`;
 }
 
+function renderFolderTotals(groups, depth, totalBytes) {
+    if (!groups) return '';
+    const total = BigInt(totalBytes);
+    const rows = groups.map(group => `
+        <tr>
+            <th scope="row"><code><bdi>${escapeHtml(group.path)}</bdi></code></th>
+            <td class="number">${integers.format(group.files)}</td>
+            <td class="number">${sizeLabel(group.diskBytes)}</td>
+            <td class="number">${sizeLabel(group.rgbaBytes)}</td>
+            <td class="number">${hundredths(BigInt(group.rgbaBytes) * 100n, total)}%</td>
+        </tr>`
+    ).join('');
+    return `
+    <section aria-labelledby="folder-totals">
+        <h2 id="folder-totals">Folder totals</h2>
+        ${rows ? `
+        <div class="table-wrap" role="region" aria-label="Folder totals table" tabindex="0">
+            <table>
+                <caption>Grouped by up to ${integers.format(depth)} parent levels. A dot represents files at the root.</caption>
+                <thead><tr>
+                    <th scope="col">Folder</th><th scope="col">Images</th>
+                    <th scope="col">Disk size</th><th scope="col">RGBA8 estimate</th>
+                    <th scope="col">Share of estimate</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>` : '<p class="note">No readable images were found.</p>'}
+    </section>`;
+}
+
 export function renderHtmlReport(report) {
-    const { files, totals, limits, exceeded, invalid, skippedLinks, mipmaps, baseline } = report;
+    const { files, totals, limits, exceeded, invalid, skippedLinks, mipmaps, baseline, groups, groupDepth } = report;
     const maxBytes = BigInt(files[0]?.rgbaBytes ?? 0);
     const overEdge = new Set(exceeded.edge);
     const rows = files.map((file, index) => {
@@ -196,6 +226,7 @@ export function renderHtmlReport(report) {
         ${edgeBudget || totalBudget ? `<ul>${edgeBudget}${totalBudget}</ul>` : '<p class="note">No limits supplied.</p>'}
     </section>
     ${renderBaseline(baseline)}
+    ${renderFolderTotals(groups, groupDepth, totals.rgbaBytes)}
     <section aria-labelledby="ranked">
         <h2 id="ranked">Ranked images</h2>
         ${rows ? `

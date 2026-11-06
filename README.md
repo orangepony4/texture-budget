@@ -47,6 +47,14 @@ node bin/texture-budget.mjs assets --mipmaps --baseline texture-baseline.json --
 
 Both scans must use the same mipmap mode. The baseline must contain no invalid or unreadable images. The comparison matches exact relative paths and lists added and removed images, changes in estimated bytes, and total growth. A growth limit of `0` allows no increase. Without a growth limit, differences are reported without failing the check. Use `--json` or `--html` to save the comparison.
 
+## Find the most expensive folders
+
+Use `--group-depth 1` to summarize top-level folders or `--group-depth 2` to split them one level further. Root-level files appear in the `.` group. The report ranks groups by estimated RGBA8 bytes and includes disk size and image count for each group.
+
+```sh
+node bin/texture-budget.mjs assets --mipmaps --group-depth 2 --html > folder-report.html
+```
+
 ## How the estimate works
 
 - The base level uses `width × height × 4` bytes. With `--mipmaps`, each dimension is halved and rounded down at every step, with a minimum of 1 pixel, until the chain reaches 1 × 1.
