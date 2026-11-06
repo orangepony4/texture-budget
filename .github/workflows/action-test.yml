@@ -1,0 +1,115 @@
+name: Action smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js for test assertions
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Create a synthetic PNG header and baseline
+        id: fixture
+        shell: bash
+        run: |
+          node --input-type=module - <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { crc32 } from 'node:zlib';
+
+          const root = mkdtempSync(join(process.env.RUNNER_TEMP, 'texture-budget-smoke-'));
+          const directory = join(root, 'textures');
+          const maps = join(directory, 'maps');
+          mkdirSync(maps, { recursive: true });
+          // PNG signature and a 1024 × 512 RGBA IHDR, followed by its CRC.
+          const header = Buffer.alloc(33);
+          Buffer.from('89504e470d0a1a0a0000000d4948445200000400000002000806000000', 'hex').copy(header);
+          header.writeUInt32BE(crc32(header.subarray(12, 29)), 29);
+          writeFileSync(join(maps, 'atlas.png'), header);
+
+          const baseline = join(root, 'baseline.json');
+          writeFileSync(baseline, execFileSync(process.execPath, [
+              'bin/texture-budget.mjs', directory, '--json',
+          ]));
+          appendFileSync(process.env.GITHUB_OUTPUT, `directory=${directory}\nbaseline=${baseline}\n`);
+          NODE
+      - name: Scan within the limits
+        id: passing
+        uses: ./
+        with:
+          directory: ${{ steps.fixture.outputs.directory }}
+          max-image-mib: '2'
+          baseline: ${{ steps.fixture.outputs.baseline }}
+          max-growth-mib: '0'
+          group-depth: '1'
+      - name: Verify passing outputs
+        shell: bash
+        env:
+          REPORT_PATH: ${{ steps.passing.outputs['report-path'] }}
+          EXIT_CODE: ${{ steps.passing.outputs['exit-code'] }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+
+          assert.equal(process.env.EXIT_CODE, '0');
+          const report = JSON.parse(readFileSync(process.env.REPORT_PATH, 'utf8'));
+          assert.equal(report.mipmaps, false);
+          assert.deepEqual(report.totals, { files: 1, diskBytes: '33', rgbaBytes: '2097152' });
+          assert.deepEqual(report.exceeded.images, []);
+          assert.deepEqual(report.invalid, []);
+          assert.equal(report.baseline.maxGrowthMiB, 0);
+          assert.equal(report.baseline.deltaRgbaBytes, '0');
+          assert.equal(report.baseline.growthExceeded, false);
+          assert.equal(report.groupDepth, 1);
+          assert.deepEqual(report.groups, [
+              { path: 'maps', files: 1, diskBytes: '33', rgbaBytes: '2097152' },
+          ]);
+          NODE
+      - name: Scan with a mipmap budget violation
+        id: violation
+        continue-on-error: true
+        uses: ./
+        with:
+          directory: ${{ steps.fixture.outputs.directory }}
+          mipmaps: 'true'
+          max-image-mib: '2'
+      - name: Verify violation outputs
+        shell: bash
+        env:
+          ACTION_OUTCOME: ${{ steps.violation.outcome }}
+          REPORT_PATH: ${{ steps.violation.outputs['report-path'] }}
+          EXIT_CODE: ${{ steps.violation.outputs['exit-code'] }}
+        run: |
+          node --input-type=module - <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+
+          assert.equal(process.env.ACTION_OUTCOME, 'failure');
+          assert.equal(process.env.EXIT_CODE, '1');
+          const report = JSON.parse(readFileSync(process.env.REPORT_PATH, 'utf8'));
+          assert.equal(report.mipmaps, true);
+          assert.equal(report.totals.rgbaBytes, '2796204');
+          assert.deepEqual(report.exceeded.images, ['maps/atlas.png']);
+          assert.deepEqual(report.invalid, []);
+          NODE

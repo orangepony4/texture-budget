@@ -1,0 +1,33 @@
+name: Texture Budget
+description: Check image dimensions and estimated RGBA8 texture memory in a repository.
+author: orangepony4
+branding:
+  icon: image
+  color: green
+inputs:
+  directory:
+    description: Texture folder, relative to the checked-out workspace or absolute.
+    required: true
+  mipmaps:
+    description: Include all mip levels down to 1 x 1.
+    default: 'false'
+  max-edge:
+    description: Maximum permitted image width or height in pixels.
+  max-image-mib:
+    description: Maximum estimated RGBA8 memory per image in MiB.
+  max-total-mib:
+    description: Maximum total estimated RGBA8 memory in MiB.
+  baseline:
+    description: Optional path to a previous Texture Budget JSON report.
+  max-growth-mib:
+    description: Maximum allowed increase from the baseline in MiB.
+  group-depth:
+    description: Optional number of parent folder levels used for grouping.
+outputs:
+  report-path:
+    description: Absolute path to the JSON report on the runner, available after a completed scan.
+  exit-code:
+    description: Texture Budget CLI exit code. Zero is a pass, one is a failed check, and two is an execution error.
+runs:
+  using: node24
+  main: bin/action.mjs

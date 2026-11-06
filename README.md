@@ -17,7 +17,7 @@ node bin/texture-budget.mjs "/path/to/assets"
 To use the `texture-budget` command from any directory, install a `.tgz` package from the [releases page](https://github.com/orangepony4/texture-budget/releases/latest).
 
 ```sh
-npm install --global ./texture-budget-0.3.0.tgz
+npm install --global ./texture-budget-0.4.0.tgz
 texture-budget --help
 ```
 
@@ -54,6 +54,8 @@ node bin/texture-budget.mjs assets --mipmaps --json > texture-baseline.json
 node bin/texture-budget.mjs assets --mipmaps --baseline texture-baseline.json --max-growth-mib 8
 ```
 
+In Windows PowerShell 5.1, write the baseline with `node bin/texture-budget.mjs assets --mipmaps --json | Set-Content -Encoding UTF8 texture-baseline.json`.
+
 Both scans must use the same mipmap mode. The baseline must contain no invalid or unreadable images. The comparison matches exact relative paths and lists added and removed images, changes in estimated bytes, and total growth. A growth limit of `0` allows no increase. Without a growth limit, differences are reported without failing the check. Use `--json` or `--html` to save the comparison.
 
 ## Find the most expensive folders
@@ -63,6 +65,24 @@ Use `--group-depth 1` to summarize top-level folders or `--group-depth 2` to spl
 ```sh
 node bin/texture-budget.mjs assets --mipmaps --group-depth 2 --html > folder-report.html
 ```
+
+## Use in GitHub Actions
+
+Add this step after checking out your repository. It uses GitHub Actions' Node.js runtime directly.
+
+```yaml
+- uses: orangepony4/texture-budget@v0.4.0
+  id: textures
+  with:
+    directory: assets
+    mipmaps: 'true'
+    max-edge: '2048'
+    max-image-mib: '24'
+    max-total-mib: '128'
+    group-depth: '1'
+```
+
+The action uses the same exit codes as the CLI. On a completed scan, `steps.textures.outputs.report-path` points to a JSON report in the runner's temporary directory and `steps.textures.outputs.exit-code` is `0` or `1`. A following artifact step can use `if: always() && steps.textures.outputs.report-path != ''` to retain a report even when a limit fails. An execution error fails the step without a report.
 
 ## How the estimate works
 
