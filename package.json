@@ -1,0 +1,17 @@
+{
+  "name": "texture-budget",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Inspect image dimensions and estimate texture memory from a folder of assets",
+  "type": "module",
+  "bin": {
+    "texture-budget": "./bin/texture-budget.mjs"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
