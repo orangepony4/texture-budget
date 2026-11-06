@@ -167,6 +167,24 @@ test('permits exact limits and flags a mipmapped total over one MiB', async t =>
     assert.deepEqual(JSON.parse(mipmapped.stdout).exceeded, { edge: [], total: true });
 });
 
+test('checks per-image budgets independently and includes mipmaps', async t => {
+    const { folder, run } = await fixture(t);
+    await writeFile(join(folder, 'edge.png'), png(512, 512));
+    await writeFile(join(folder, 'small.png'), png(64, 64));
+    const exact = run(folder, '--json', '--max-image-mib', '1');
+    expectExit(exact, 0);
+    assert.equal(JSON.parse(exact.stdout).limits.maxImageMiB, 1);
+    assert.deepEqual(JSON.parse(exact.stdout).exceeded, { edge: [], total: false, images: [] });
+
+    const mipmapped = run(folder, '--json', '--max-image-mib', '1', '--mipmaps');
+    expectExit(mipmapped, 1);
+    assert.deepEqual(JSON.parse(mipmapped.stdout).exceeded, { edge: [], total: false, images: ['edge.png'] });
+    const html = run(folder, '--html', '--max-image-mib', '1', '--mipmaps');
+    expectExit(html, 1);
+    assert.match(html.stdout, /Over image budget/);
+    expectExit(run(folder, '--max-image-mib', '0'), 2);
+});
+
 test('preserves large byte estimates and sorting beyond Number precision', async t => {
     const { folder, run } = await fixture(t);
     const edge = 0x7ffffffe;

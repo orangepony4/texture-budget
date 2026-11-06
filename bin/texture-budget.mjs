@@ -10,14 +10,16 @@ import { groupTextures } from '../src/groups.mjs';
 import { renderHtmlReport } from '../src/report-html.mjs';
 
 const usage = `Usage:
-  texture-budget <folder> [--json | --html] [--mipmaps] [--max-edge <pixels>] [--max-total-mib <MiB>]
-                          [--baseline <report.json>] [--max-growth-mib <MiB>] [--group-depth <levels>]
+  texture-budget <folder> [--json | --html] [--mipmaps] [--max-edge <pixels>] [--max-image-mib <MiB>]
+                          [--max-total-mib <MiB>] [--baseline <report.json>] [--max-growth-mib <MiB>]
+                          [--group-depth <levels>]
 
 Scan PNG, JPEG and WebP headers and estimate uncompressed RGBA8 texture memory.
 
 Options:
   --mipmaps               Include all mip levels down to 1 x 1.
   --max-edge <pixels>      Fail if an image exceeds this width or height.
+  --max-image-mib <MiB>    Fail if any individual texture exceeds this budget.
   --max-total-mib <MiB>    Fail if the total estimate exceeds this budget.
   --baseline <report>     Compare with a saved JSON report.
   --max-growth-mib <MiB>   Fail if growth over the baseline exceeds this amount.
@@ -92,6 +94,10 @@ function printReport(report) {
         console.log(`\nEdge limit (${limits.maxEdge} px): ${exceeded.edge.length} over limit`);
         for (const path of exceeded.edge) console.log(`  ${JSON.stringify(path)}`);
     }
+    if (limits.maxImageMiB !== undefined) {
+        console.log(`\nPer-image limit (${limits.maxImageMiB} MiB): ${exceeded.images.length} over limit`);
+        for (const path of exceeded.images) console.log(`  ${JSON.stringify(path)}`);
+    }
     if (limits.maxTotalMiB !== null) {
         const result = exceeded.total ? 'exceeded' : 'within budget';
         console.log(`Total limit (${limits.maxTotalMiB} MiB): ${result}`);
@@ -126,6 +132,7 @@ async function main() {
             html: { type: 'boolean' },
             mipmaps: { type: 'boolean' },
             'max-edge': { type: 'string' },
+            'max-image-mib': { type: 'string' },
             'max-total-mib': { type: 'string' },
             baseline: { type: 'string' },
             'max-growth-mib': { type: 'string' },
@@ -157,12 +164,14 @@ async function main() {
         throw new Error('--max-growth-mib requires --baseline <report.json>. See --help.');
     }
     const maxEdge = parseLimit(values['max-edge'], '--max-edge');
+    const maxImageMiB = parseLimit(values['max-image-mib'], '--max-image-mib');
     const maxTotalMiB = parseLimit(values['max-total-mib'], '--max-total-mib');
     const groupDepth = parseLimit(values['group-depth'], '--group-depth');
     const previous = values.baseline === undefined ? undefined : await readBaseline(resolve(values.baseline));
     const report = await scanTextures(resolve(positionals[0]), {
         mipmaps: values.mipmaps ?? false,
         maxEdge,
+        maxImageMiB,
         maxTotalMiB,
     });
     if (values.baseline !== undefined) {
@@ -179,7 +188,7 @@ async function main() {
     } else {
         printReport(report);
     }
-    return report.exceeded.edge.length || report.exceeded.total || report.invalid.length ||
+    return report.exceeded.edge.length || report.exceeded.images?.length || report.exceeded.total || report.invalid.length ||
         report.baseline?.growthExceeded ? 1 : 0;
 }
 

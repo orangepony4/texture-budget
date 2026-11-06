@@ -86,7 +86,9 @@ function comparePaths(a, b) {
     return a < b ? -1 : a > b ? 1 : 0;
 }
 
-export async function scanTextures(root, { mipmaps = false, maxEdge = null, maxTotalMiB = null } = {}) {
+export async function scanTextures(root, {
+    mipmaps = false, maxEdge = null, maxTotalMiB = null, maxImageMiB = null,
+} = {}) {
     const rootStat = await lstat(root, statOptions);
     if (!rootStat.isDirectory()) {
         throw new Error('The scan root must be a regular directory.');
@@ -95,6 +97,12 @@ export async function scanTextures(root, { mipmaps = false, maxEdge = null, maxT
     const invalid = [];
     const skippedLinks = [];
     const exceeded = { edge: [], total: false };
+    const limits = { maxEdge, maxTotalMiB };
+    const maxImageBytes = maxImageMiB === null ? null : BigInt(maxImageMiB) * bytesPerMiB;
+    if (maxImageBytes !== null) {
+        limits.maxImageMiB = maxImageMiB;
+        exceeded.images = [];
+    }
     let diskBytes = 0n;
     let estimatedBytes = 0n;
 
@@ -111,6 +119,9 @@ export async function scanTextures(root, { mipmaps = false, maxEdge = null, maxT
             if (maxEdge !== null && Math.max(image.width, image.height) > maxEdge) {
                 exceeded.edge.push(path);
             }
+            if (maxImageBytes !== null && image.rgbaBytes > maxImageBytes) {
+                exceeded.images.push(path);
+            }
         } catch (error) {
             const message = error.code ? `Could not read image (${error.code}).` : error.message;
             invalid.push({ path, error: message });
@@ -124,6 +135,7 @@ export async function scanTextures(root, { mipmaps = false, maxEdge = null, maxT
     invalid.sort((a, b) => comparePaths(a.path, b.path));
     skippedLinks.sort(comparePaths);
     exceeded.edge.sort(comparePaths);
+    exceeded.images?.sort(comparePaths);
     exceeded.total = maxTotalMiB !== null && estimatedBytes > BigInt(maxTotalMiB) * bytesPerMiB;
 
     return {
@@ -133,7 +145,7 @@ export async function scanTextures(root, { mipmaps = false, maxEdge = null, maxT
             rgbaBytes: file.rgbaBytes.toString(),
         })),
         totals: { files: files.length, diskBytes: diskBytes.toString(), rgbaBytes: estimatedBytes.toString() },
-        limits: { maxEdge, maxTotalMiB },
+        limits,
         exceeded,
         invalid,
         skippedLinks,

@@ -14,13 +14,22 @@ cd texture-budget
 node bin/texture-budget.mjs "/path/to/assets"
 ```
 
-Use limits to check a game asset folder in CI. This example sets a 2,048-pixel edge limit and a 128 MiB total budget, including mipmaps.
+To use the `texture-budget` command from any directory, install a `.tgz` package from the [releases page](https://github.com/orangepony4/texture-budget/releases/latest).
 
 ```sh
-node bin/texture-budget.mjs assets --max-edge 2048 --max-total-mib 128 --mipmaps
+npm install --global ./texture-budget-0.3.0.tgz
+texture-budget --help
+```
+
+Use limits to check a game asset folder in CI. This example sets a 2,048-pixel edge limit, a 24 MiB per-texture budget, and a 128 MiB total budget, including mipmaps.
+
+```sh
+node bin/texture-budget.mjs assets --max-edge 2048 --max-image-mib 24 --max-total-mib 128 --mipmaps
 ```
 
 Add `--json` for the complete list, totals, limit violations, unreadable headers, and skipped links. Byte counts are decimal strings so scripts can preserve exact values. Limits allow the boundary value. A texture measuring exactly 2,048 pixels on its longest edge passes a limit of 2,048.
+
+`--max-image-mib` limits each estimated texture separately. If enabled, the JSON report includes `limits.maxImageMiB` and a list of paths in `exceeded.images`.
 
 Use `--html` to save a report you can open in a browser or share with a teammate. The report contains paths and dimensions, uses no external resources, and keeps the same exit codes as the text and JSON formats.
 

@@ -171,6 +171,7 @@ export function renderHtmlReport(report) {
     const { files, totals, limits, exceeded, invalid, skippedLinks, mipmaps, baseline, groups, groupDepth } = report;
     const maxBytes = BigInt(files[0]?.rgbaBytes ?? 0);
     const overEdge = new Set(exceeded.edge);
+    const overImageBudget = new Set(exceeded.images);
     const rows = files.map((file, index) => {
         const share = maxBytes === 0n ? '0' : hundredths(BigInt(file.rgbaBytes) * 100n, maxBytes);
         return `
@@ -183,6 +184,7 @@ export function renderHtmlReport(report) {
                 </td>
                 <td class="number">${sizeLabel(file.diskBytes)}</td>
                 <td class="number">${sizeLabel(file.rgbaBytes)}
+                    ${overImageBudget.has(file.path) ? '<br><span class="flag">Over image budget</span>' : ''}
                     <div class="bar" aria-hidden="true"><span style="width: ${share}%"></span></div>
                 </td>
             </tr>`;
@@ -194,6 +196,10 @@ export function renderHtmlReport(report) {
     const totalBudget = limits.maxTotalMiB === null ? '' : `
         <li>Total RGBA8 budget <strong>${integers.format(limits.maxTotalMiB)} MiB</strong>
             <span class="${exceeded.total ? 'flag' : 'note'}">${exceeded.total ? 'Exceeded' : 'Within budget'}</span>
+        </li>`;
+    const imageBudget = limits.maxImageMiB === undefined ? '' : `
+        <li>Per-image RGBA8 budget <strong>${integers.format(limits.maxImageMiB)} MiB</strong>
+            <span class="${overImageBudget.size ? 'flag' : 'note'}">${integers.format(overImageBudget.size)} over limit</span>
         </li>`;
     const issues = invalid.map(({ path, error }) =>
         `<li><code><bdi>${escapeHtml(path)}</bdi></code> · ${escapeHtml(error)}</li>`
@@ -223,7 +229,7 @@ export function renderHtmlReport(report) {
     </dl>
     <section aria-labelledby="budgets">
         <h2 id="budgets">Budgets</h2>
-        ${edgeBudget || totalBudget ? `<ul>${edgeBudget}${totalBudget}</ul>` : '<p class="note">No limits supplied.</p>'}
+        ${edgeBudget || imageBudget || totalBudget ? `<ul>${edgeBudget}${imageBudget}${totalBudget}</ul>` : '<p class="note">No limits supplied.</p>'}
     </section>
     ${renderBaseline(baseline)}
     ${renderFolderTotals(groups, groupDepth, totals.rgbaBytes)}
