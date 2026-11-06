@@ -4,9 +4,10 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { bytesPerMiB, scanTextures } from '../src/budget.mjs';
+import { renderHtmlReport } from '../src/report-html.mjs';
 
 const usage = `Usage:
-  texture-budget <folder> [--json] [--mipmaps] [--max-edge <pixels>] [--max-total-mib <MiB>]
+  texture-budget <folder> [--json | --html] [--mipmaps] [--max-edge <pixels>] [--max-total-mib <MiB>]
 
 Scan PNG, JPEG and WebP headers and estimate uncompressed RGBA8 texture memory.
 
@@ -15,6 +16,7 @@ Options:
   --max-edge <pixels>      Fail if an image exceeds this width or height.
   --max-total-mib <MiB>    Fail if the total estimate exceeds this budget.
   --json                  Print every file and result as JSON.
+  --html                  Print a standalone HTML report.
   -h, --help              Show this help.
   -v, --version           Show the installed version.`;
 
@@ -70,6 +72,7 @@ async function main() {
         allowPositionals: true,
         options: {
             json: { type: 'boolean' },
+            html: { type: 'boolean' },
             mipmaps: { type: 'boolean' },
             'max-edge': { type: 'string' },
             'max-total-mib': { type: 'string' },
@@ -89,6 +92,9 @@ async function main() {
     if (positionals.length !== 1 || !positionals[0]) {
         throw new Error('Expected one folder. See --help.');
     }
+    if (values.json && values.html) {
+        throw new Error('Choose either --json or --html. See --help.');
+    }
     const report = await scanTextures(resolve(positionals[0]), {
         mipmaps: values.mipmaps ?? false,
         maxEdge: parseLimit(values['max-edge'], '--max-edge'),
@@ -96,6 +102,8 @@ async function main() {
     });
     if (values.json) {
         console.log(JSON.stringify(report, null, 2));
+    } else if (values.html) {
+        console.log(renderHtmlReport(report));
     } else {
         printReport(report);
     }

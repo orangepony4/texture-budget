@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
+import { renderHtmlReport } from '../src/report-html.mjs';
 
 const cli = fileURLToPath(new URL('../bin/texture-budget.mjs', import.meta.url));
 const pngSignature = Buffer.from('89504e470d0a1a0a', 'hex');
@@ -35,6 +36,13 @@ async function fixture(t) {
 
 function expectExit(result, status) {
     assert.equal(result.status, status, result.stderr || result.stdout);
+}
+
+function expectStandaloneHtml(html) {
+    assert.match(html, /^\s*<!doctype html>\s*<html\b/i);
+    assert.match(html, /<head\b[\s\S]*<\/head>\s*<body\b[\s\S]*<\/body>\s*<\/html>\s*$/i);
+    assert.doesNotMatch(html, /<script\b[^>]*\bsrc\s*=/i);
+    assert.doesNotMatch(html, /<link\b[^>]*\brel\s*=\s*["']?stylesheet\b/i);
 }
 
 function pngChunk(type, data) {
@@ -220,6 +228,59 @@ test('reports directory links without scanning outside the texture folder', asyn
     assert.deepEqual(report.skippedLinks, ['linked']);
     assert.deepEqual(report.files, []);
     assert.deepEqual(report.totals, { files: 0, diskBytes: '0', rgbaBytes: '0' });
+});
+
+test('emits a standalone HTML report and preserves CLI exit codes', async t => {
+    const { folder, run } = await fixture(t);
+    await writeFile(join(folder, "O'Brien & Sons.png"), png(5, 3));
+    const thumbnail = png(1, 1);
+    for (let index = 0; index < 10; index++) {
+        await writeFile(join(folder, `small-${index}.png`), thumbnail);
+    }
+    await writeFile(join(folder, 'zz-tail.png'), thumbnail);
+
+    const clean = run(folder, '--html');
+    expectExit(clean, 0);
+    expectStandaloneHtml(clean.stdout);
+    assert.match(clean.stdout, /O(?:&#39;|&#x27;|&apos;)Brien &amp; Sons\.png/);
+    assert.doesNotMatch(clean.stdout, /O'Brien & Sons\.png/);
+    assert.match(clean.stdout, /zz-tail\.png/);
+
+    const exceeded = run(folder, '--html', '--max-edge', '4');
+    expectExit(exceeded, 1);
+    expectStandaloneHtml(exceeded.stdout);
+    assert.match(exceeded.stdout, /O(?:&#39;|&#x27;|&apos;)Brien &amp; Sons\.png/);
+
+    await writeFile(join(folder, 'broken.png'), pngSignature);
+    const invalid = run(folder, '--html');
+    expectExit(invalid, 1);
+    expectStandaloneHtml(invalid.stdout);
+    assert.match(invalid.stdout, /broken\.png/);
+
+    const conflict = run(folder, '--html', '--json');
+    expectExit(conflict, 2);
+    assert.equal(conflict.stdout, '');
+});
+
+test('HTML report escapes hostile paths, diagnostic text, and skipped links', () => {
+    const path = `<script>probe()</script> & "double" 'single'.png`;
+    const report = {
+        files: [{ path, format: 'png', width: 5, height: 3, diskBytes: '71', rgbaBytes: '60' }],
+        totals: { files: 1, diskBytes: '71', rgbaBytes: '60' },
+        limits: { maxEdge: 4, maxTotalMiB: null },
+        exceeded: { edge: [path], total: false },
+        invalid: [{ path: '<bad-path>.png', error: 'bad <img src=x onerror=probe()> & "message"' }],
+        skippedLinks: ['<iframe src="https://example.test">'],
+        mipmaps: false,
+    };
+
+    const html = renderHtmlReport(report);
+    expectStandaloneHtml(html);
+    assert.match(html, /&lt;script&gt;probe\(\)&lt;\/script&gt; &amp; &quot;double&quot; (?:&#39;|&#x27;|&apos;)single(?:&#39;|&#x27;|&apos;)\.png/);
+    assert.match(html, /&lt;bad-path&gt;\.png/);
+    assert.match(html, /bad &lt;img src=x onerror=probe\(\)&gt; &amp; &quot;message&quot;/);
+    assert.match(html, /&lt;iframe src=&quot;https:\/\/example\.test&quot;&gt;/);
+    assert.doesNotMatch(html, /<script>probe\(\)<\/script>|<img src=x|<bad-path>|<iframe\b/i);
 });
 
 test('returns execution or usage errors for missing folders and invalid limits', async t => {
