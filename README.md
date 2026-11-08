@@ -56,7 +56,7 @@ node bin/texture-budget.mjs assets --mipmaps --baseline texture-baseline.json --
 
 In Windows PowerShell 5.1, write the baseline with `node bin/texture-budget.mjs assets --mipmaps --json | Set-Content -Encoding UTF8 texture-baseline.json`.
 
-Both scans must use the same mipmap mode. The baseline must contain no invalid or unreadable images. The comparison matches exact relative paths and lists added and removed images, changes in estimated bytes, and total growth. A growth limit of `0` allows no increase. Without a growth limit, differences are reported without failing the check. Use `--json` or `--html` to save the comparison.
+Both scans must use the same mipmap mode. The baseline must contain no invalid or unreadable images. Its stored RGBA8 estimates must match the image dimensions and mipmap mode. The comparison matches exact relative paths and lists added and removed images, changes in estimated bytes, and total growth. A growth limit of `0` allows no increase. Without a growth limit, differences are reported without failing the check. Use `--json` or `--html` to save the comparison.
 
 ## Find the most expensive folders
 
@@ -71,7 +71,7 @@ node bin/texture-budget.mjs assets --mipmaps --group-depth 2 --html > folder-rep
 Add this step after checking out your repository. It uses GitHub Actions' Node.js runtime directly.
 
 ```yaml
-- uses: orangepony4/texture-budget@v0.4.0
+- uses: orangepony4/texture-budget@v0.4.1
   id: textures
   with:
     directory: assets

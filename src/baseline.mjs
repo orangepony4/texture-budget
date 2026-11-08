@@ -1,4 +1,5 @@
-import { bytesPerMiB } from './budget.mjs';
+import { bytesPerMiB, estimateRgbaBytes } from './budget.mjs';
+import { MAX_IMAGE_DIMENSION } from './image-dimensions.mjs';
 
 function isRecord(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -8,6 +9,10 @@ function isFilePath(path) {
     return typeof path === 'string'
         && !/[\x00\uD800-\uDFFF]/u.test(path)
         && path.split('/').every(part => part && part !== '.' && part !== '..');
+}
+
+function isImageDimension(value) {
+    return Number.isInteger(value) && value >= 1 && value <= MAX_IMAGE_DIMENSION;
 }
 
 function readBaseline(report, mipmaps) {
@@ -28,15 +33,17 @@ function readBaseline(report, mipmaps) {
         if (!isRecord(file) || !isFilePath(file.path)) {
             throw new Error('Baseline image entries require a valid relative path.');
         }
-        const { path, rgbaBytes } = file;
+        const { path, width, height, rgbaBytes } = file;
         if (files.has(path)) {
             throw new Error(`Duplicate baseline path ${JSON.stringify(path)}.`);
         }
-        if (typeof rgbaBytes !== 'string' || rgbaBytes.length === 0 || rgbaBytes.length > 20
-            || rgbaBytes.startsWith('0') || /[^0-9]/.test(rgbaBytes)) {
-            throw new Error(`Invalid baseline RGBA8 byte count for ${JSON.stringify(path)}.`);
+        if (!isImageDimension(width) || !isImageDimension(height)) {
+            throw new Error(`Invalid baseline image dimensions for ${JSON.stringify(path)}.`);
         }
-        const size = BigInt(rgbaBytes);
+        const size = estimateRgbaBytes(width, height, mipmaps);
+        if (rgbaBytes !== size.toString()) {
+            throw new Error(`Baseline RGBA8 byte count for ${JSON.stringify(path)} does not match its dimensions and mipmap mode.`);
+        }
         total += size;
         files.set(path, size);
     }

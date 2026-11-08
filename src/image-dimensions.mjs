@@ -10,6 +10,8 @@ const JPEG_HEADER_LIMIT = 16 * 1024 * 1024;
 const JPEG_MARKER_LIMIT = 4096;
 const JPEG_READ_WINDOW = 4096;
 const WEBP_CHUNK_LIMIT = 4096;
+// PNG allows the largest dimensions of the supported formats.
+export const MAX_IMAGE_DIMENSION = 0x7fff_ffff;
 
 async function readExactly(handle, size, offset, length, label) {
     if (length > size - offset) {
@@ -36,7 +38,7 @@ function pngDimensions(header) {
     }
     const width = header.readUInt32BE(16);
     const height = header.readUInt32BE(20);
-    if (width === 0 || height === 0 || width > 0x7fff_ffff || height > 0x7fff_ffff) {
+    if (width === 0 || height === 0 || width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION) {
         throw new Error('Invalid PNG dimensions. Width and height must be between 1 and 2147483647.');
     }
     const bitDepth = header[24];

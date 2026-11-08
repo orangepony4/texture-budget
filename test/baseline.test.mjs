@@ -149,3 +149,47 @@ test('rejects invalid reports, inconsistent totals, and different mipmap modes',
         run(2, '--baseline', baseline);
     }
 });
+
+test('rejects self-summed baseline estimates that would hide texture growth', async t => {
+    const { baseline, put, run } = await fixture(t);
+    for (const { flags, previousBytes, currentBytes, delta } of [
+        { flags: [], previousBytes: '60', currentBytes: '84', delta: '24' },
+        { flags: ['--mipmaps'], previousBytes: '72', currentBytes: '100', delta: '28' },
+    ]) {
+        await put('base.jpg', 3, 5);
+        const authentic = JSON.parse(run(0, ...flags));
+        assert.equal(authentic.files[0].rgbaBytes, previousBytes);
+        await writeFile(baseline, JSON.stringify(authentic));
+        const compare = [...flags, '--baseline', baseline, '--max-growth-mib', '0'];
+        const unchanged = JSON.parse(run(0, ...compare));
+        assert.equal(unchanged.baseline.deltaRgbaBytes, '0');
+        assert.equal(unchanged.baseline.growthExceeded, false);
+
+        await put('base.jpg', 3, 7);
+        const grown = JSON.parse(run(1, ...compare));
+        assert.equal(grown.files[0].rgbaBytes, currentBytes);
+        assert.equal(grown.baseline.deltaRgbaBytes, delta);
+        assert.equal(grown.baseline.growthExceeded, true);
+
+        const edited = {
+            ...authentic,
+            files: [{ ...authentic.files[0], rgbaBytes: currentBytes }],
+            totals: { ...authentic.totals, rgbaBytes: currentBytes },
+        };
+        await writeFile(baseline, JSON.stringify(edited));
+        assert.match(run(2, ...compare), /RGBA8 byte count.*dimensions.*mipmap mode/i);
+    }
+});
+
+test('rejects missing and impossible baseline dimensions', async t => {
+    const { baseline, put, run } = await fixture(t);
+    await put('base.jpg', 3, 5);
+    const authentic = JSON.parse(run(0));
+    for (const width of [undefined, 0, 1.5, 2 ** 31, '3']) {
+        await writeFile(baseline, JSON.stringify({
+            ...authentic,
+            files: [{ ...authentic.files[0], width }],
+        }));
+        assert.match(run(2, '--baseline', baseline), /invalid baseline image dimensions/i);
+    }
+});

@@ -8,7 +8,7 @@ const statOptions = { bigint: true };
 const readFlags = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 export const bytesPerMiB = 1024n * 1024n;
 
-function rgbaBytes(width, height, mipmaps) {
+export function estimateRgbaBytes(width, height, mipmaps) {
     let pixels = BigInt(width) * BigInt(height);
     if (mipmaps) {
         while (width > 1 || height > 1) {
@@ -50,7 +50,9 @@ async function inspectFile(location, path, stat, mipmaps) {
         const { format, width, height } = await readImageDimensions(file, Number(stat.size));
         checkFileUnchanged(stat, await file.stat(statOptions));
         checkFileUnchanged(stat, await lstat(location, statOptions));
-        return { path, format, width, height, diskBytes: stat.size, rgbaBytes: rgbaBytes(width, height, mipmaps) };
+        return {
+            path, format, width, height, diskBytes: stat.size, rgbaBytes: estimateRgbaBytes(width, height, mipmaps),
+        };
     } finally {
         await file.close();
     }
