@@ -20,7 +20,7 @@ export function estimateRgbaBytes(width, height, mipmaps) {
     return pixels * 4n;
 }
 
-function sameEntry(before, after) {
+export function sameEntry(before, after) {
     return before.dev === after.dev && before.ino === after.ino && before.size === after.size
         && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
 }

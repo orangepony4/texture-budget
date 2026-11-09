@@ -4,7 +4,7 @@ import { constants } from 'node:fs';
 import { lstat, open, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { bytesPerMiB, scanTextures } from '../src/budget.mjs';
+import { bytesPerMiB, sameEntry, scanTextures } from '../src/budget.mjs';
 import { compareBudgetBaseline, incompleteComparisonNote } from '../src/baseline.mjs';
 import { groupTextures } from '../src/groups.mjs';
 import { renderHtmlReport } from '../src/report-html.mjs';
@@ -40,16 +40,28 @@ function parseLimit(value, option, minimum = 1) {
 }
 
 async function readBaseline(file) {
-    if (!(await lstat(file)).isFile()) {
+    const statOptions = { bigint: true };
+    const before = await lstat(file, statOptions);
+    if (!before.isFile()) {
         throw new Error('The baseline must be a regular JSON file.');
     }
     const flags = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
     const handle = await open(file, flags);
+    const matchesBaseline = stat => stat?.isFile() && sameEntry(before, stat);
     try {
-        if (!(await handle.stat()).isFile()) {
-            throw new Error('The baseline must be a regular JSON file.');
+        if (!matchesBaseline(await handle.stat(statOptions))) {
+            throw new Error('Baseline changed before reading.');
         }
         const bytes = await handle.readFile();
+        const handleAfter = await handle.stat(statOptions);
+        // An unchanged handle does not rule out a replacement at the baseline path.
+        const pathAfter = await lstat(file, statOptions).catch(error => {
+            if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
+            throw error;
+        });
+        if (!matchesBaseline(handleAfter) || !matchesBaseline(pathAfter)) {
+            throw new Error('Baseline changed during reading.');
+        }
         try {
             return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
         } catch (error) {

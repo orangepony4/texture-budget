@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const cli = fileURLToPath(new URL('../bin/texture-budget.mjs', import.meta.url));
 const action = fileURLToPath(new URL('../bin/action.mjs', import.meta.url));
 
-async function fixture(t) {
+async function fixture(t, nodeArgs = []) {
     const tempRoot = await realpath(tmpdir());
     const directory = await mkdtemp(join(tempRoot, 'texture-baseline-'));
     t.after(async () => {
@@ -22,7 +22,7 @@ async function fixture(t) {
 
     function run(status, ...flags) {
         const output = flags.includes('--html') ? [] : ['--json'];
-        const result = spawnSync(process.execPath, [cli, folder, ...output, ...flags], {
+        const result = spawnSync(process.execPath, [...nodeArgs, cli, folder, ...output, ...flags], {
             cwd: directory, encoding: 'utf8', timeout: 10_000, windowsHide: true,
         });
         assert.ifError(result.error);
@@ -48,6 +48,75 @@ async function fixture(t) {
 
     return { baseline, directory, folder, put, run };
 }
+
+function fixtureWithBaselineReadHook(t, changeBaseline) {
+    const preload = `
+        import fs from 'node:fs/promises';
+        import { syncBuiltinESMExports } from 'node:module';
+        import { dirname, join } from 'node:path';
+
+        const position = process.argv.indexOf('--baseline');
+        const baseline = position < 0 ? null : process.argv[position + 1];
+        const open = fs.open;
+        fs.open = async (path, ...args) => {
+            const handle = await open(path, ...args);
+            if (path === baseline) {
+                const read = handle.readFile.bind(handle);
+                handle.readFile = async (...options) => {
+                    const bytes = await read(...options);
+                    ${changeBaseline}
+                    return bytes;
+                };
+            }
+            return handle;
+        };
+        syncBuiltinESMExports();
+    `;
+    return fixture(t, ['--import', `data:text/javascript,${encodeURIComponent(preload)}`]);
+}
+
+test('rejects a baseline edited while its original bytes are being read', async t => {
+    const { baseline, directory, put, run } = await fixtureWithBaselineReadHook(t, `
+        await fs.writeFile(path, await fs.readFile(join(dirname(path), 'new-baseline.json')));
+    `);
+    const emptyBaseline = run(0);
+    await put('current.jpg', 1, 1);
+    await writeFile(baseline, run(0));
+    await writeFile(join(directory, 'new-baseline.json'), emptyBaseline);
+    assert.match(run(2, '--baseline', baseline, '--max-growth-mib', '0'), /Baseline changed during reading/);
+    assert.equal(await readFile(baseline, 'utf8'), emptyBaseline);
+});
+
+test('rejects a baseline path retargeted while the original handle stays open', async t => {
+    const { directory, put, run } = await fixtureWithBaselineReadHook(t, `
+        const link = dirname(path);
+        const windows = process.platform === 'win32';
+        if (windows) await fs.rmdir(link);
+        else await fs.unlink(link);
+        await fs.symlink(join(dirname(link), 'replacement'), link, windows ? 'junction' : 'dir');
+    `);
+    const original = join(directory, 'original');
+    const replacement = join(directory, 'replacement');
+    const reference = join(directory, 'reference');
+    await mkdir(original);
+    await mkdir(replacement);
+    const emptyBaseline = run(0);
+    await writeFile(join(replacement, 'baseline.json'), emptyBaseline);
+    await put('current.jpg', 1, 1);
+    await writeFile(join(original, 'baseline.json'), run(0));
+    try {
+        await symlink(original, reference, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+        if (['EACCES', 'EPERM', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP'].includes(error.code)) {
+            t.skip(`Link creation is unavailable (${error.code})`);
+            return;
+        }
+        throw error;
+    }
+    const baseline = join(reference, 'baseline.json');
+    assert.match(run(2, '--baseline', baseline, '--max-growth-mib', '0'), /Baseline changed during reading/);
+    assert.equal(await readFile(baseline, 'utf8'), emptyBaseline);
+});
 
 test('compares a saved JSON report without changing the default report shape', async t => {
     const { baseline, folder, put, run } = await fixture(t);
