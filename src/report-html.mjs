@@ -1,4 +1,5 @@
 import { bytesPerMiB } from './budget.mjs';
+import { incompleteComparisonNote } from './baseline.mjs';
 
 const bytesPerKiB = 1024n;
 const integers = new Intl.NumberFormat('en-US');
@@ -111,9 +112,11 @@ function listPaths(paths) {
 
 function renderBaseline(baseline) {
     if (!baseline) return '';
+    let growthStatus = baseline.growthExceeded ? 'Exceeded' : 'Within budget';
+    if (baseline.incomplete) growthStatus = baseline.growthExceeded ? 'Exceeded by readable images' : 'Comparison incomplete';
     const growth = baseline.maxGrowthMiB === null ? '' : `
         <p>Growth limit <strong>${integers.format(baseline.maxGrowthMiB)} MiB</strong>
-            <span class="${baseline.growthExceeded ? 'flag' : 'note'}">${baseline.growthExceeded ? 'Exceeded' : 'Within budget'}</span>
+            <span class="${baseline.growthExceeded ? 'flag' : 'note'}">${growthStatus}</span>
         </p>`;
     const changes = baseline.changed.map(({ path, deltaRgbaBytes }) =>
         `<li><code><bdi>${escapeHtml(path)}</bdi></code> · ${sizeLabel(deltaRgbaBytes, true)}</li>`
@@ -128,12 +131,13 @@ function renderBaseline(baseline) {
     return `
     <section aria-labelledby="baseline">
         <h2 id="baseline">Baseline comparison</h2>
+        ${baseline.incomplete ? `<p class="note">${incompleteComparisonNote}</p>` : ''}
         <dl class="baseline-totals">
             <div><dt>Previous RGBA8</dt><dd>${sizeLabel(baseline.previousRgbaBytes)}</dd></div>
-            <div><dt>Change</dt><dd>${sizeLabel(baseline.deltaRgbaBytes, true)}</dd></div>
+            <div><dt>${baseline.incomplete ? 'Change using readable current images' : 'Change'}</dt><dd>${sizeLabel(baseline.deltaRgbaBytes, true)}</dd></div>
         </dl>
         ${growth}
-        ${details || '<p class="note">No image budget changes.</p>'}
+        ${details || (baseline.incomplete ? '' : '<p class="note">No image budget changes.</p>')}
     </section>`;
 }
 

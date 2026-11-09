@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const cli = fileURLToPath(new URL('../bin/texture-budget.mjs', import.meta.url));
+const action = fileURLToPath(new URL('../bin/action.mjs', import.meta.url));
 
 async function fixture(t) {
     const tempRoot = await realpath(tmpdir());
@@ -45,7 +46,7 @@ async function fixture(t) {
         await writeFile(join(folder, name), bytes);
     }
 
-    return { baseline, folder, put, run };
+    return { baseline, directory, folder, put, run };
 }
 
 test('compares a saved JSON report without changing the default report shape', async t => {
@@ -192,4 +193,82 @@ test('rejects missing and impossible baseline dimensions', async t => {
         }));
         assert.match(run(2, '--baseline', baseline), /invalid baseline image dimensions/i);
     }
+});
+
+test('keeps unreadable current images separate from true removals in baseline reports', async t => {
+    const { baseline, folder, put, run } = await fixture(t);
+    await put('atlas.jpg', 512, 512);
+    await put('gone.jpg', 1, 1);
+    await writeFile(baseline, run(0));
+    await writeFile(join(folder, 'atlas.jpg'), Buffer.from([0xff, 0xd8]));
+    await rm(join(folder, 'gone.jpg'));
+    await put('added.jpg', 1, 1);
+
+    assert.equal(Object.hasOwn(JSON.parse(run(1)), 'baseline'), false);
+    const flags = ['--baseline', baseline, '--max-growth-mib', '0'];
+    const json = JSON.parse(run(1, ...flags));
+    assert.deepEqual(json.invalid.map(file => file.path), ['atlas.jpg']);
+    assert.deepEqual(json.baseline, {
+        previousRgbaBytes: '1048580', deltaRgbaBytes: '-1048576', added: ['added.jpg'], removed: ['gone.jpg'],
+        changed: [], maxGrowthMiB: 0, growthExceeded: false, incomplete: true,
+    });
+
+    const text = spawnSync(process.execPath, [cli, folder, ...flags], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
+    assert.ifError(text.error);
+    assert.equal(text.status, 1, text.stderr);
+    assert.match(text.stdout, /Baseline comparison is incomplete/);
+    assert.match(text.stdout, /Change using readable current images/);
+    assert.match(text.stdout, /Growth limit \(0 MiB\): comparison incomplete/);
+    assert.doesNotMatch(text.stdout, /within budget/i);
+    const html = run(1, ...flags, '--html');
+    assert.match(html, /Baseline comparison is incomplete/);
+    assert.match(html, /Change using readable current images/);
+    assert.match(html, /Removed images \(1\)/);
+    assert.doesNotMatch(html, /within budget/i);
+
+    await put('added.jpg', 1024, 1024);
+    assert.equal(JSON.parse(run(1, ...flags)).baseline.growthExceeded, true);
+    assert.match(run(1, ...flags, '--html'), /Exceeded by readable images/);
+});
+
+test('the Action keeps a JSON report and explains an incomplete baseline check', async t => {
+    const { baseline, directory, folder, put, run } = await fixture(t);
+    const runnerTemp = join(directory, 'runner temp');
+    const output = join(directory, 'output.txt');
+    await mkdir(runnerTemp);
+    await put('atlas.jpg', 512, 512);
+    await writeFile(baseline, run(0));
+
+    async function runAction(status) {
+        await writeFile(output, '');
+        const result = spawnSync(process.execPath, [action], {
+            cwd: directory, encoding: 'utf8', timeout: 10_000, windowsHide: true,
+            env: {
+                ...process.env, GITHUB_ACTIONS: 'true', GITHUB_WORKSPACE: directory, GITHUB_OUTPUT: output,
+                RUNNER_TEMP: runnerTemp, INPUT_DIRECTORY: 'textures', INPUT_BASELINE: 'before.json',
+                INPUT_MIPMAPS: 'false', 'INPUT_MAX-GROWTH-MIB': '0',
+            },
+        });
+        assert.ifError(result.error);
+        assert.equal(result.status, status, result.stderr);
+        const [reportLine, exitLine] = (await readFile(output, 'utf8')).trimEnd().split('\n');
+        assert.equal(exitLine, `exit-code=${status}`);
+        assert.match(reportLine, /^report-path=/);
+        const reportPath = reportLine.slice('report-path='.length);
+        assert.equal(dirname(dirname(reportPath)), runnerTemp);
+        return { json: JSON.parse(await readFile(reportPath, 'utf8')), stderr: result.stderr };
+    }
+
+    const healthy = await runAction(0);
+    assert.deepEqual(healthy.json, JSON.parse(run(0, '--baseline', baseline, '--max-growth-mib', '0')));
+    assert.equal(Object.hasOwn(healthy.json.baseline, 'incomplete'), false);
+    assert.doesNotMatch(healthy.stderr, /comparison is incomplete/i);
+
+    await writeFile(join(folder, 'atlas.jpg'), Buffer.from([0xff, 0xd8]));
+    const damaged = await runAction(1);
+    assert.equal(damaged.json.baseline.incomplete, true);
+    assert.equal(damaged.json.baseline.growthExceeded, false);
+    assert.deepEqual(damaged.json.baseline.removed, []);
+    assert.deepEqual(damaged.json.invalid.map(file => file.path), ['atlas.jpg']);
+    assert.match(damaged.stderr, /Baseline comparison is incomplete\. The current estimate includes readable images only\./);
 });

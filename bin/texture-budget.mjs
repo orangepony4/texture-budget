@@ -5,7 +5,7 @@ import { lstat, open, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { bytesPerMiB, scanTextures } from '../src/budget.mjs';
-import { compareBudgetBaseline } from '../src/baseline.mjs';
+import { compareBudgetBaseline, incompleteComparisonNote } from '../src/baseline.mjs';
 import { groupTextures } from '../src/groups.mjs';
 import { renderHtmlReport } from '../src/report-html.mjs';
 
@@ -104,9 +104,12 @@ function printReport(report) {
     }
     if (baseline) {
         console.log(`\nBaseline RGBA8: ${formatBytes(baseline.previousRgbaBytes)}`);
-        console.log(`Change: ${formatBytes(baseline.deltaRgbaBytes, true)}`);
+        if (baseline.incomplete) console.log(incompleteComparisonNote);
+        const change = baseline.incomplete ? 'Change using readable current images' : 'Change';
+        console.log(`${change}: ${formatBytes(baseline.deltaRgbaBytes, true)}`);
         if (baseline.maxGrowthMiB !== null) {
-            const result = baseline.growthExceeded ? 'exceeded' : 'within budget';
+            let result = baseline.growthExceeded ? 'exceeded' : 'within budget';
+            if (baseline.incomplete) result = baseline.growthExceeded ? 'exceeded by readable images' : 'comparison incomplete';
             console.log(`Growth limit (${baseline.maxGrowthMiB} MiB): ${result}`);
         }
         console.log(`Added: ${baseline.added.length}, removed: ${baseline.removed.length}, changed estimates: ${baseline.changed.length}`);
@@ -182,6 +185,7 @@ async function main() {
         report.groups = groupTextures(report.files, groupDepth);
     }
     if (values.json) {
+        if (report.baseline?.incomplete) console.error(`texture-budget: ${incompleteComparisonNote}`);
         console.log(JSON.stringify(report, null, 2));
     } else if (values.html) {
         console.log(renderHtmlReport(report));

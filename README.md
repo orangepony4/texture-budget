@@ -58,6 +58,10 @@ In Windows PowerShell 5.1, write the baseline with `node bin/texture-budget.mjs 
 
 Both scans must use the same mipmap mode. The baseline must contain no invalid or unreadable images. Its stored RGBA8 estimates must match the image dimensions and mipmap mode. The comparison matches exact relative paths and lists added and removed images, changes in estimated bytes, and total growth. A growth limit of `0` allows no increase. Without a growth limit, differences are reported without failing the check. Use `--json` or `--html` to save the comparison.
 
+If the current scan finds unreadable images, the comparison reports an estimate based on readable images and adds `baseline.incomplete: true` to JSON. Unreadable paths stay under scan issues and are excluded from the removal list. The scan exits with code `1`.
+
+Если при текущей проверке некоторые изображения не читаются, сравнение использует оценку по читаемым изображениям и добавляет в JSON `baseline.incomplete: true`. Пути нечитаемых файлов отображаются среди ошибок проверки и исключаются из списка удалённых. Код завершения проверки — `1`.
+
 ## Find the most expensive folders
 
 Use `--group-depth 1` to summarize top-level folders or `--group-depth 2` to split them one level further. Root-level files appear in the `.` group. The report ranks groups by estimated RGBA8 bytes and includes disk size and image count for each group.

@@ -1,6 +1,8 @@
 import { bytesPerMiB, estimateRgbaBytes } from './budget.mjs';
 import { MAX_IMAGE_DIMENSION } from './image-dimensions.mjs';
 
+export const incompleteComparisonNote = 'Baseline comparison is incomplete. The current estimate includes readable images only.';
+
 function isRecord(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -75,6 +77,9 @@ export function compareBudgetBaseline(previous, current, { maxGrowthMiB = null }
         }
     }
 
+    const invalid = current.invalid ?? [];
+    for (const { path } of invalid) remaining.delete(path);
+
     const delta = currentTotal - previousTotal;
     return {
         previousRgbaBytes: previousTotal.toString(),
@@ -84,5 +89,6 @@ export function compareBudgetBaseline(previous, current, { maxGrowthMiB = null }
         changed: changed.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
         maxGrowthMiB,
         growthExceeded: maxGrowthMiB !== null && delta > BigInt(maxGrowthMiB) * bytesPerMiB,
+        ...(invalid.length > 0 ? { incomplete: true } : {}),
     };
 }
