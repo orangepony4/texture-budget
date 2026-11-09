@@ -225,6 +225,37 @@ test('reports malformed images and continues scanning other textures', async t =
     assert.deepEqual(report.exceeded, { edge: [], total: false });
 });
 
+test('rejects a corrupted PNG dimension checksum without inspecting pixel data', async t => {
+    const { folder, run } = await fixture(t);
+    const wide = png(1025, 1);
+    const image = join(folder, 'wide.png');
+    await writeFile(image, wide);
+
+    const scan = () => run(folder, '--json', '--max-edge', '512');
+    const before = scan();
+    expectExit(before, 1);
+    const original = JSON.parse(before.stdout);
+    assert.equal(original.files[0].width, 1025);
+    assert.deepEqual(original.exceeded.edge, ['wide.png']);
+    assert.deepEqual(original.invalid, []);
+
+    wide[18] ^= 0x04; // Width becomes 1 while the original IHDR checksum stays intact.
+    await writeFile(image, wide);
+    const badPixels = png(2, 2);
+    badPixels[41] ^= 0x80; // Corrupt IDAT data outside the dimension header.
+    await writeFile(join(folder, 'pixels.png'), badPixels);
+
+    const after = scan();
+    expectExit(after, 1);
+    const report = JSON.parse(after.stdout);
+    assert.deepEqual(report.files.map(file => file.path), ['pixels.png']);
+    assert.deepEqual(report.totals, { files: 1, diskBytes: String(badPixels.length), rgbaBytes: '16' });
+    assert.deepEqual(report.exceeded.edge, []);
+    assert.equal(report.invalid.length, 1);
+    assert.equal(report.invalid[0].path, 'wide.png');
+    assert.match(report.invalid[0].error, /PNG IHDR checksum/i);
+});
+
 test('reports directory links without scanning outside the texture folder', async t => {
     const { directory, folder, run } = await fixture(t);
     const outside = join(directory, 'outside');

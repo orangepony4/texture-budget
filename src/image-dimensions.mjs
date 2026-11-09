@@ -29,12 +29,28 @@ async function readExactly(handle, size, offset, length, label) {
     return bytes;
 }
 
+function pngCrc32(bytes) {
+    let crc = 0xffff_ffff;
+    for (const byte of bytes) {
+        crc ^= byte;
+        for (let bit = 0; bit < 8; bit++) {
+            const lowBit = crc & 1;
+            crc >>>= 1;
+            if (lowBit) crc ^= 0xedb8_8320;
+        }
+    }
+    return (crc ^ 0xffff_ffff) >>> 0;
+}
+
 function pngDimensions(header) {
     if (header.length < 33) {
         throw new Error('Truncated PNG IHDR chunk.');
     }
     if (header.readUInt32BE(8) !== 13 || header.toString('latin1', 12, 16) !== 'IHDR') {
         throw new Error('PNG must begin with a 13-byte IHDR chunk.');
+    }
+    if (pngCrc32(header.subarray(12, 29)) !== header.readUInt32BE(29)) {
+        throw new Error('PNG IHDR checksum mismatch.');
     }
     const width = header.readUInt32BE(16);
     const height = header.readUInt32BE(20);

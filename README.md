@@ -89,6 +89,7 @@ The action uses the same exit codes as the CLI. On a completed scan, `steps.text
 - The base level uses `width × height × 4` bytes. With `--mipmaps`, each dimension is halved and rounded down at every step, with a minimum of 1 pixel, until the chain reaches 1 × 1.
 - The estimate treats each image as a separate RGBA8 texture. Compression, padding, atlases, animation frames, and engine import settings can change actual runtime use. For animated WebP, the estimate covers its canvas.
 - The scan looks for `.png`, `.jpg`, `.jpeg`, and `.webp` extensions and identifies the format from the header. It reads stored dimensions without decoding pixels, so it does not validate the image payload. Symbolic links and junctions are skipped.
+- PNG inspection checks the IHDR checksum before using its dimensions.
 - JPEG inspection reads frame headers within the first 16 MiB and reports an error if it reaches the header scan limit. JPEG-LS and JPEG files whose dimensions are defined later in the image stream are outside the supported scope.
 - Totals include images whose headers were read successfully. Review any invalid or unreadable paths before using the totals as a budget.
 - Scan a stable folder. If the scanner detects a directory change during the scan, it exits with code `2`.
