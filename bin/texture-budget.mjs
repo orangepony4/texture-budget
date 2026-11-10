@@ -3,6 +3,7 @@
 import { constants } from 'node:fs';
 import { lstat, open, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { parseArgs } from 'node:util';
 import { bytesPerMiB, sameEntry, scanTextures } from '../src/budget.mjs';
 import { compareBudgetBaseline, incompleteComparisonNote } from '../src/baseline.mjs';
@@ -81,61 +82,71 @@ function formatBytes(value, signed = false) {
     return `${sign}${hundredths / 100n}.${fraction} MiB (${sign}${bytes} bytes)`;
 }
 
-function printReport(report) {
+async function writeOutput(lines) {
+    try {
+        await pipeline(function* () {
+            for (const line of lines) yield `${line}\n`;
+        }, process.stdout);
+    } catch (error) {
+        throw new Error(`Could not write standard output: ${error.message}`, { cause: error });
+    }
+}
+
+function* reportLines(report) {
     const { totals, limits, exceeded, invalid, skippedLinks, files, mipmaps, baseline, groups, groupDepth } = report;
     const mode = mipmaps ? 'full mip chain' : 'base level';
-    console.log(`Textures: ${totals.files}`);
-    console.log(`Disk size: ${formatBytes(totals.diskBytes)}`);
-    console.log(`Estimated RGBA8 (${mode}): ${formatBytes(totals.rgbaBytes)}`);
+    yield `Textures: ${totals.files}`;
+    yield `Disk size: ${formatBytes(totals.diskBytes)}`;
+    yield `Estimated RGBA8 (${mode}): ${formatBytes(totals.rgbaBytes)}`;
     if (files.length) {
-        console.log('\nLargest textures:');
+        yield '\nLargest textures:';
         for (const file of files.slice(0, 10)) {
-            console.log(`  ${JSON.stringify(file.path)}  ${file.width} x ${file.height}  ${formatBytes(file.rgbaBytes)}`);
+            yield `  ${JSON.stringify(file.path)}  ${file.width} x ${file.height}  ${formatBytes(file.rgbaBytes)}`;
         }
-        if (files.length > 10) console.log('  Use --json for the complete file list.');
+        if (files.length > 10) yield '  Use --json for the complete file list.';
     }
     if (groups) {
-        console.log(`\nFolder totals (depth ${groupDepth}):`);
+        yield `\nFolder totals (depth ${groupDepth}):`;
         for (const group of groups.slice(0, 10)) {
-            console.log(`  ${JSON.stringify(group.path)}  ${group.files} files  ${formatBytes(group.rgbaBytes)}`);
+            yield `  ${JSON.stringify(group.path)}  ${group.files} files  ${formatBytes(group.rgbaBytes)}`;
         }
-        if (!groups.length) console.log('  No readable images.');
-        if (groups.length > 10) console.log('  Use --json or --html for all groups.');
+        if (!groups.length) yield '  No readable images.';
+        if (groups.length > 10) yield '  Use --json or --html for all groups.';
     }
     if (limits.maxEdge !== null) {
-        console.log(`\nEdge limit (${limits.maxEdge} px): ${exceeded.edge.length} over limit`);
-        for (const path of exceeded.edge) console.log(`  ${JSON.stringify(path)}`);
+        yield `\nEdge limit (${limits.maxEdge} px): ${exceeded.edge.length} over limit`;
+        for (const path of exceeded.edge) yield `  ${JSON.stringify(path)}`;
     }
     if (limits.maxImageMiB !== undefined) {
-        console.log(`\nPer-image limit (${limits.maxImageMiB} MiB): ${exceeded.images.length} over limit`);
-        for (const path of exceeded.images) console.log(`  ${JSON.stringify(path)}`);
+        yield `\nPer-image limit (${limits.maxImageMiB} MiB): ${exceeded.images.length} over limit`;
+        for (const path of exceeded.images) yield `  ${JSON.stringify(path)}`;
     }
     if (limits.maxTotalMiB !== null) {
         const result = exceeded.total ? 'exceeded' : 'within budget';
-        console.log(`Total limit (${limits.maxTotalMiB} MiB): ${result}`);
+        yield `Total limit (${limits.maxTotalMiB} MiB): ${result}`;
     }
     if (baseline) {
-        console.log(`\nBaseline RGBA8: ${formatBytes(baseline.previousRgbaBytes)}`);
-        if (baseline.incomplete) console.log(incompleteComparisonNote);
+        yield `\nBaseline RGBA8: ${formatBytes(baseline.previousRgbaBytes)}`;
+        if (baseline.incomplete) yield incompleteComparisonNote;
         const change = baseline.incomplete ? 'Change using readable current images' : 'Change';
-        console.log(`${change}: ${formatBytes(baseline.deltaRgbaBytes, true)}`);
+        yield `${change}: ${formatBytes(baseline.deltaRgbaBytes, true)}`;
         if (baseline.maxGrowthMiB !== null) {
             let result = baseline.growthExceeded ? 'exceeded' : 'within budget';
             if (baseline.incomplete) result = baseline.growthExceeded ? 'exceeded by readable images' : 'comparison incomplete';
-            console.log(`Growth limit (${baseline.maxGrowthMiB} MiB): ${result}`);
+            yield `Growth limit (${baseline.maxGrowthMiB} MiB): ${result}`;
         }
-        console.log(`Added: ${baseline.added.length}, removed: ${baseline.removed.length}, changed estimates: ${baseline.changed.length}`);
+        yield `Added: ${baseline.added.length}, removed: ${baseline.removed.length}, changed estimates: ${baseline.changed.length}`;
         for (const { path, deltaRgbaBytes } of baseline.changed.slice(0, 10)) {
-            console.log(`  ${JSON.stringify(path)}  ${formatBytes(deltaRgbaBytes, true)}`);
+            yield `  ${JSON.stringify(path)}  ${formatBytes(deltaRgbaBytes, true)}`;
         }
     }
     if (invalid.length) {
-        console.log(`\nInvalid or unreadable images: ${invalid.length}`);
-        for (const { path, error } of invalid) console.log(`  ${JSON.stringify(path)}: ${error}`);
+        yield `\nInvalid or unreadable images: ${invalid.length}`;
+        for (const { path, error } of invalid) yield `  ${JSON.stringify(path)}: ${error}`;
     }
     if (skippedLinks.length) {
-        console.log(`\nSkipped links: ${skippedLinks.length}`);
-        for (const path of skippedLinks) console.log(`  ${JSON.stringify(path)}`);
+        yield `\nSkipped links: ${skippedLinks.length}`;
+        for (const path of skippedLinks) yield `  ${JSON.stringify(path)}`;
     }
 }
 
@@ -157,12 +168,12 @@ async function main() {
         },
     });
     if (values.help) {
-        console.log(usage);
+        await writeOutput([usage]);
         return 0;
     }
     if (values.version) {
         const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
-        console.log(version);
+        await writeOutput([version]);
         return 0;
     }
     if (positionals.length !== 1 || !positionals[0]) {
@@ -198,11 +209,11 @@ async function main() {
     }
     if (values.json) {
         if (report.baseline?.incomplete) console.error(`texture-budget: ${incompleteComparisonNote}`);
-        console.log(JSON.stringify(report, null, 2));
+        await writeOutput([JSON.stringify(report, null, 2)]);
     } else if (values.html) {
-        console.log(renderHtmlReport(report));
+        await writeOutput([renderHtmlReport(report)]);
     } else {
-        printReport(report);
+        await writeOutput(reportLines(report));
     }
     return report.exceeded.edge.length || report.exceeded.images?.length || report.exceeded.total || report.invalid.length ||
         report.baseline?.growthExceeded ? 1 : 0;

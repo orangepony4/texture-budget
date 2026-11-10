@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -37,6 +38,23 @@ async function fixture(t) {
 function expectExit(result, status) {
     assert.equal(result.status, status, result.stderr || result.stdout);
 }
+
+test('treats a closed stdout pipe as an execution error in every output mode', { timeout: 10_000 }, async t => {
+    const { directory, folder } = await fixture(t);
+    await writeFile(join(folder, 'atlas.png'), png(4, 1));
+    const formats = [[folder], [folder, '--json'], [folder, '--html', '--max-edge', '1'], ['--help'], ['--version']];
+    for (const args of formats) {
+        const child = spawn(process.execPath, [cli, ...args], {
+            cwd: directory, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+        });
+        const closed = once(child, 'close');
+        child.stdout.destroy();
+        let stderr = '';
+        child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
+        assert.deepEqual(await closed, [2, null], stderr || JSON.stringify(args));
+        assert.match(stderr, /^texture-budget: Could not write standard output: .+/);
+    }
+});
 
 function expectStandaloneHtml(html) {
     assert.match(html, /^\s*<!doctype html>\s*<html\b/i);
