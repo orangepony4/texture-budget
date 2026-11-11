@@ -1,5 +1,5 @@
 import { bytesPerMiB } from './budget.mjs';
-import { incompleteComparisonNote } from './baseline.mjs';
+import { baselineCoverage } from './baseline.mjs';
 
 const bytesPerKiB = 1024n;
 const integers = new Intl.NumberFormat('en-US');
@@ -29,8 +29,8 @@ function sizeLabel(value, signed = false) {
 const styles = `
     :root {
         color-scheme: light dark;
-        --bg: #edf3f2; --surface: #ffffff; --ink: #132927; --muted: #48635f;
-        --line: #cbdad6; --accent: #0e7364; --track: #dceae7;
+        --bg: #f2eef8; --surface: #ffffff; --ink: #282039; --muted: #5c506d;
+        --line: #d8cde6; --accent: #7050a3; --track: #e7ddf4;
         --warning: #9e381a; --warning-bg: #fff1e8;
     }
     * { box-sizing: border-box; }
@@ -40,10 +40,10 @@ const styles = `
     }
     main { width: min(76rem, 100% - 2rem); margin: 2rem auto 4rem; }
     header, section { padding: clamp(1rem, 3vw, 1.85rem); border-radius: 1rem; }
-    header { background: #113832; color: #f4fbf8; }
-    header p { color: #cce9df; }
+    header { background: #30234a; color: #faf5ff; }
+    header p { color: #e2d2fa; }
     .eyebrow {
-        margin: 0; color: #a7ebd6; font-size: .75rem; font-weight: 700;
+        margin: 0; color: #d6baf7; font-size: .75rem; font-weight: 700;
         letter-spacing: .12em; text-transform: uppercase;
     }
     h1, h2, h3, p { margin: 0; }
@@ -83,8 +83,8 @@ const styles = `
     .notes { margin-top: 1rem; }
     @media (prefers-color-scheme: dark) {
         :root {
-            --bg: #101c1b; --surface: #182725; --ink: #e9f5f0; --muted: #b8ccc7;
-            --line: #37524d; --accent: #74dfc8; --track: #354d48;
+            --bg: #1b1623; --surface: #261e30; --ink: #f1e8fa; --muted: #cebfdd;
+            --line: #554466; --accent: #c5a4f1; --track: #473655;
             --warning: #ffc1a6; --warning-bg: #46291f;
         }
     }
@@ -112,6 +112,8 @@ function listPaths(paths) {
 
 function renderBaseline(baseline) {
     if (!baseline) return '';
+    const { note, deltaLabel } = baselineCoverage(baseline);
+    const hidden = baseline.pathsHiddenByBaselineLinks ?? [];
     let growthStatus = baseline.growthExceeded ? 'Exceeded' : 'Within budget';
     if (baseline.incomplete) growthStatus = baseline.growthExceeded ? 'Exceeded by readable images' : 'Comparison incomplete';
     const growth = baseline.maxGrowthMiB === null ? '' : `
@@ -125,16 +127,17 @@ function renderBaseline(baseline) {
         ['Added images', baseline.added.length, listPaths(baseline.added)],
         ['Removed images', baseline.removed.length, listPaths(baseline.removed)],
         ['Changed estimates', baseline.changed.length, changes],
+        ['Paths hidden by baseline links', hidden.length, listPaths(hidden)],
     ].filter(([, count]) => count > 0).map(([label, count, items]) =>
         `<details><summary>${label} (${integers.format(count)})</summary><ul>${items}</ul></details>`
     ).join('');
     return `
     <section aria-labelledby="baseline">
         <h2 id="baseline">Baseline comparison</h2>
-        ${baseline.incomplete ? `<p class="note">${incompleteComparisonNote}</p>` : ''}
+        ${note ? `<p class="note">${note}</p>` : ''}
         <dl class="baseline-totals">
             <div><dt>Previous RGBA8</dt><dd>${sizeLabel(baseline.previousRgbaBytes)}</dd></div>
-            <div><dt>${baseline.incomplete ? 'Change using readable current images' : 'Change'}</dt><dd>${sizeLabel(baseline.deltaRgbaBytes, true)}</dd></div>
+            <div><dt>${deltaLabel}</dt><dd>${sizeLabel(baseline.deltaRgbaBytes, true)}</dd></div>
         </dl>
         ${growth}
         ${details || (baseline.incomplete ? '' : '<p class="note">No image budget changes.</p>')}

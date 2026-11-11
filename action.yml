@@ -3,7 +3,7 @@ description: Check image dimensions and estimated RGBA8 texture memory in a repo
 author: orangepony4
 branding:
   icon: image
-  color: green
+  color: purple
 inputs:
   directory:
     description: Texture folder, relative to the checked-out workspace or absolute.

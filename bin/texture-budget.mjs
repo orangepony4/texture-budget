@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { parseArgs } from 'node:util';
 import { bytesPerMiB, sameEntry, scanTextures } from '../src/budget.mjs';
-import { compareBudgetBaseline, incompleteComparisonNote } from '../src/baseline.mjs';
+import { baselineCoverage, compareBudgetBaseline } from '../src/baseline.mjs';
 import { groupTextures } from '../src/groups.mjs';
 import { renderHtmlReport } from '../src/report-html.mjs';
 
@@ -127,9 +127,9 @@ function* reportLines(report) {
     }
     if (baseline) {
         yield `\nBaseline RGBA8: ${formatBytes(baseline.previousRgbaBytes)}`;
-        if (baseline.incomplete) yield incompleteComparisonNote;
-        const change = baseline.incomplete ? 'Change using readable current images' : 'Change';
-        yield `${change}: ${formatBytes(baseline.deltaRgbaBytes, true)}`;
+        const { note, deltaLabel } = baselineCoverage(baseline);
+        if (note) yield note;
+        yield `${deltaLabel}: ${formatBytes(baseline.deltaRgbaBytes, true)}`;
         if (baseline.maxGrowthMiB !== null) {
             let result = baseline.growthExceeded ? 'exceeded' : 'within budget';
             if (baseline.incomplete) result = baseline.growthExceeded ? 'exceeded by readable images' : 'comparison incomplete';
@@ -138,6 +138,12 @@ function* reportLines(report) {
         yield `Added: ${baseline.added.length}, removed: ${baseline.removed.length}, changed estimates: ${baseline.changed.length}`;
         for (const { path, deltaRgbaBytes } of baseline.changed.slice(0, 10)) {
             yield `  ${JSON.stringify(path)}  ${formatBytes(deltaRgbaBytes, true)}`;
+        }
+        const hidden = baseline.pathsHiddenByBaselineLinks;
+        if (hidden?.length) {
+            yield `Paths hidden by baseline links (${hidden.length}):`;
+            for (const path of hidden.slice(0, 10)) yield `  ${JSON.stringify(path)}`;
+            if (hidden.length > 10) yield '  Use --json or --html for all paths.';
         }
     }
     if (invalid.length) {
@@ -208,7 +214,7 @@ async function main() {
         report.groups = groupTextures(report.files, groupDepth);
     }
     if (values.json) {
-        if (report.baseline?.incomplete) console.error(`texture-budget: ${incompleteComparisonNote}`);
+        if (report.baseline?.incomplete) console.error(`texture-budget: ${baselineCoverage(report.baseline).note}`);
         await writeOutput([JSON.stringify(report, null, 2)]);
     } else if (values.html) {
         await writeOutput([renderHtmlReport(report)]);

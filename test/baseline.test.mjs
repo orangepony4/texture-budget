@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, rmdir, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -389,4 +389,89 @@ test('keeps baseline images blocked by skipped links separate from true removals
     assert.match(html, /Removed images \(1\)/);
     assert.match(html, /Skipped links \(3\)/);
     assert.doesNotMatch(html, /within budget/i);
+});
+
+test('keeps newly readable paths behind baseline links out of the growth verdict', async t => {
+    const { baseline, directory, folder, put, run } = await fixture(t);
+    const outside = join(directory, 'outside');
+    const nested = join(folder, 'sprites');
+    const top = join(folder, 'top.jpg');
+    await mkdir(outside);
+    const windows = process.platform === 'win32';
+    const linkType = windows ? 'junction' : 'dir';
+    try {
+        await symlink(outside, nested, linkType);
+    } catch (error) {
+        if (['EACCES', 'EPERM', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP'].includes(error.code)) {
+            t.skip('Link creation is unavailable (' + error.code + ')');
+            return;
+        }
+        throw error;
+    }
+    await symlink(outside, top, linkType);
+    await put('base.jpg', 2, 2);
+    await put('gone.jpg', 1, 1);
+    const before = run(0);
+    assert.deepEqual(JSON.parse(before).skippedLinks, ['sprites', 'top.jpg']);
+    await writeFile(baseline, before);
+    const compare = ['--baseline', baseline, '--max-growth-mib', '0'];
+
+    await put('sprites-extra.jpg', 1, 1);
+    const unrelated = JSON.parse(run(1, ...compare));
+    assert.equal(Object.hasOwn(unrelated.baseline, 'incomplete'), false);
+    assert.equal(unrelated.baseline.growthExceeded, true);
+    assert.deepEqual(unrelated.baseline.added, ['sprites-extra.jpg']);
+
+    const removeLink = windows ? rmdir : unlink;
+    await removeLink(nested);
+    await removeLink(top);
+    await mkdir(nested);
+    await put('sprites/atlas.jpg', 512, 512);
+    await put('top.jpg', 2, 2);
+    await rm(join(folder, 'gone.jpg'));
+
+    const json = JSON.parse(run(1, ...compare));
+    assert.deepEqual(json.skippedLinks, []);
+    assert.deepEqual(json.baseline, {
+        previousRgbaBytes: '20', deltaRgbaBytes: '1048592',
+        added: ['sprites-extra.jpg'], removed: ['gone.jpg'], changed: [],
+        maxGrowthMiB: 0, growthExceeded: false, incomplete: true,
+        pathsHiddenByBaselineLinks: ['sprites/atlas.jpg', 'top.jpg'],
+    });
+    assert.equal(JSON.parse(run(1, '--baseline', baseline)).baseline.incomplete, true);
+
+    const text = spawnSync(process.execPath, [cli, folder, ...compare], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
+    assert.ifError(text.error);
+    assert.equal(text.status, 1, text.stderr);
+    assert.match(text.stdout, /Paths hidden by baseline links \(2\)/);
+    assert.match(text.stdout, /Growth limit \(0 MiB\): comparison incomplete/);
+    assert.doesNotMatch(text.stdout, /within budget|exceeded by readable images/i);
+    const html = run(1, ...compare, '--html');
+    assert.match(html, /Paths hidden by baseline links \(2\)/);
+    assert.match(html, /Comparison incomplete/);
+    assert.doesNotMatch(html, /within budget|exceeded by readable images/i);
+
+    await rm(join(nested, 'atlas.jpg'));
+    await writeFile(top, Buffer.from([0xff, 0xd8]));
+    await put('sprites-extra.jpg', 16, 16);
+    const unreadable = JSON.parse(run(1, ...compare));
+    assert.deepEqual(unreadable.invalid.map(({ path }) => path), ['top.jpg']);
+    assert.deepEqual(unreadable.baseline.pathsHiddenByBaselineLinks, ['top.jpg']);
+    assert.deepEqual(unreadable.baseline.added, ['sprites-extra.jpg']);
+    assert.equal(unreadable.baseline.growthExceeded, false);
+    assert.equal(unreadable.baseline.incomplete, true);
+});
+
+test('accepts a baseline without link metadata and rejects malformed skipped paths', async t => {
+    const { baseline, put, run } = await fixture(t);
+    await put('base.jpg', 2, 2);
+    const { skippedLinks, ...legacy } = JSON.parse(run(0));
+    assert.deepEqual(skippedLinks, []);
+    await writeFile(baseline, JSON.stringify(legacy));
+    assert.equal(Object.hasOwn(JSON.parse(run(0, '--baseline', baseline)).baseline, 'incomplete'), false);
+
+    for (const malformed of [null, 'sprites', ['../sprites'], [42]]) {
+        await writeFile(baseline, JSON.stringify({ ...legacy, skippedLinks: malformed }));
+        assert.match(run(2, '--baseline', baseline), /Baseline skipped links require valid relative paths/);
+    }
 });

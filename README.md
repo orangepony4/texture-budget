@@ -1,6 +1,6 @@
 # Texture Budget
 
-[![Tests](https://github.com/orangepony4/texture-budget/actions/workflows/test.yml/badge.svg)](https://github.com/orangepony4/texture-budget/actions/workflows/test.yml)
+[English](#quick-start) · [Русский](#русский) · [Automated tests](https://github.com/orangepony4/texture-budget/actions/workflows/test.yml)
 
 Check texture dimensions and estimate uncompressed RGBA8 memory before importing art into a game. Texture Budget scans PNG, JPEG, and WebP headers in a folder and ranks the largest textures. It runs locally without installing any package dependencies.
 
@@ -17,7 +17,7 @@ node bin/texture-budget.mjs "/path/to/assets"
 To use the `texture-budget` command from any directory, install a `.tgz` package from the [releases page](https://github.com/orangepony4/texture-budget/releases/latest).
 
 ```sh
-npm install --global ./texture-budget-0.4.0.tgz
+npm install --global ./texture-budget-0.4.7.tgz
 texture-budget --help
 ```
 
@@ -37,7 +37,7 @@ Use `--html` to save a report you can open in a browser or share with a teammate
 node bin/texture-budget.mjs assets --mipmaps --html > texture-report.html
 ```
 
-![Example report for six synthetic textures, showing estimated memory and two edge-limit violations](docs/report-preview.png)
+![Example report for six synthetic textures, showing a skipped baseline link and two edge-limit violations](docs/report-preview.png)
 
 | Exit code | Meaning |
 | --- | --- |
@@ -60,7 +60,7 @@ Both scans must use the same mipmap mode. The baseline must contain no invalid o
 
 If the current scan finds unreadable images or a skipped link covers a path in the baseline, the comparison reports an estimate based on readable images and adds `baseline.incomplete: true` to JSON. The affected paths stay out of the removal list, and the report lists unreadable images and skipped links under scan issues. The scan exits with code `1`.
 
-Если при текущей проверке изображение недоступно для чтения или путь из базового отчёта закрыт пропущенной ссылкой, сравнение учитывает только читаемые изображения и добавляет в JSON `baseline.incomplete: true`. Такие пути не считаются удалёнными. В отчёте отображаются нечитаемые изображения и пропущенные ссылки. Код завершения проверки — `1`.
+When a skipped link in the baseline covers a current image path, the report lists that path under **Paths hidden by baseline links** and in `baseline.pathsHiddenByBaselineLinks` in JSON. The comparison is incomplete and exits with code `1`. The difference between the measured totals is shown for reference. The growth limit remains undecided until the baseline covers those paths.
 
 ## Find the most expensive folders
 
@@ -75,7 +75,7 @@ node bin/texture-budget.mjs assets --mipmaps --group-depth 2 --html > folder-rep
 Add this step after checking out your repository. It uses GitHub Actions' Node.js runtime directly.
 
 ```yaml
-- uses: orangepony4/texture-budget@v0.4.1
+- uses: orangepony4/texture-budget@v0.4.7
   id: textures
   with:
     directory: assets
@@ -101,5 +101,24 @@ The action uses the same exit codes as the CLI. On a completed scan, `steps.text
 ## Development
 
 Run `npm test` for the CLI integration suite. The tests generate synthetic image headers and require no external services.
+
+## Русский
+
+Texture Budget проверяет размеры PNG, JPEG и WebP и оценивает расход памяти для несжатых текстур RGBA8. Для запуска нужен Node.js 20 или новее. После установки пакета из [релизов](https://github.com/orangepony4/texture-budget/releases/latest) запустите команду в папке проекта.
+
+```sh
+texture-budget assets --max-edge 2048 --max-image-mib 24 --max-total-mib 128 --mipmaps
+```
+
+Параметр `--mipmaps` включает все уровни вплоть до 1 × 1. Добавьте `--json` для отчёта, который можно обработать скриптом, или `--html` для просмотра в браузере.
+
+```sh
+texture-budget assets --mipmaps --json > texture-baseline.json
+texture-budget assets --mipmaps --baseline texture-baseline.json --max-growth-mib 8
+```
+
+Оба отчёта должны использовать одинаковый режим mipmap. Если при текущем сканировании часть изображений нечитаема или пропущенная ссылка закрывает ранее измеренный путь, сравнение получает код `1` и поле `baseline.incomplete: true`. Такие пути исключаются из списка удалений.
+
+Если ссылка была пропущена в исходном отчёте, пути под ней появляются в `baseline.pathsHiddenByBaselineLinks`. Для них неизвестен исходный размер, поэтому оценка роста остаётся предварительной. Сравнение помечается как неполное и завершается с кодом `1`.
 
 Released under the [MIT License](LICENSE).

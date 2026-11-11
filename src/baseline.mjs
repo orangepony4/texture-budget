@@ -3,6 +3,20 @@ import { MAX_IMAGE_DIMENSION } from './image-dimensions.mjs';
 
 export const incompleteComparisonNote = 'Baseline comparison is incomplete. The current estimate includes readable images only.';
 
+export function baselineCoverage(baseline) {
+    if (!baseline.incomplete) return { note: '', deltaLabel: 'Change' };
+    if (baseline.pathsHiddenByBaselineLinks?.length) {
+        return {
+            note: 'Baseline comparison is incomplete. Skipped links hid current image paths in the baseline scan.',
+            deltaLabel: 'Change using measured images from both scans',
+        };
+    }
+    return {
+        note: incompleteComparisonNote,
+        deltaLabel: 'Change using readable current images',
+    };
+}
+
 function isRecord(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -37,6 +51,10 @@ function readBaseline(report, mipmaps) {
     if (report.invalid.length > 0) {
         throw new Error('Baseline includes invalid or unreadable images.');
     }
+    const skippedLinks = report.skippedLinks === undefined ? [] : report.skippedLinks;
+    if (!Array.isArray(skippedLinks) || !skippedLinks.every(isFilePath)) {
+        throw new Error('Baseline skipped links require valid relative paths.');
+    }
 
     const files = new Map();
     let total = 0n;
@@ -61,13 +79,14 @@ function readBaseline(report, mipmaps) {
     if (report.totals.rgbaBytes !== total.toString()) {
         throw new Error('Baseline RGBA8 total does not match its image entries.');
     }
-    return { files, total };
+    return { files, total, skippedLinks: new Set(skippedLinks) };
 }
 
 export function compareBudgetBaseline(previous, current, { maxGrowthMiB = null } = {}) {
-    const { files: remaining, total: previousTotal } = readBaseline(previous, current.mipmaps);
+    const { files: remaining, total: previousTotal, skippedLinks: baselineLinks } = readBaseline(previous, current.mipmaps);
     const added = [];
     const changed = [];
+    const pathsHiddenByBaselineLinks = [];
     let currentTotal = 0n;
     for (const { path, rgbaBytes } of current.files) {
         const size = BigInt(rgbaBytes);
@@ -75,7 +94,8 @@ export function compareBudgetBaseline(previous, current, { maxGrowthMiB = null }
         const previousSize = remaining.get(path);
         remaining.delete(path);
         if (previousSize === undefined) {
-            added.push(path);
+            if (baselineLinks.size && hasSkippedLink(path, baselineLinks)) pathsHiddenByBaselineLinks.push(path);
+            else added.push(path);
         } else if (previousSize !== size) {
             changed.push({
                 path,
@@ -87,10 +107,16 @@ export function compareBudgetBaseline(previous, current, { maxGrowthMiB = null }
     }
 
     const invalid = current.invalid ?? [];
-    for (const { path } of invalid) remaining.delete(path);
+    for (const { path } of invalid) {
+        const wasMeasured = remaining.delete(path);
+        if (!wasMeasured && baselineLinks.size && hasSkippedLink(path, baselineLinks)) {
+            pathsHiddenByBaselineLinks.push(path);
+        }
+    }
 
     const skippedLinks = new Set(current.skippedLinks ?? []);
-    let incomplete = invalid.length > 0;
+    const baselineGap = pathsHiddenByBaselineLinks.length > 0;
+    let incomplete = invalid.length > 0 || baselineGap;
     const removed = [];
     for (const path of remaining.keys()) {
         if (skippedLinks.size && hasSkippedLink(path, skippedLinks)) incomplete = true;
@@ -105,7 +131,8 @@ export function compareBudgetBaseline(previous, current, { maxGrowthMiB = null }
         removed: removed.sort(),
         changed: changed.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
         maxGrowthMiB,
-        growthExceeded: maxGrowthMiB !== null && delta > BigInt(maxGrowthMiB) * bytesPerMiB,
+        growthExceeded: !baselineGap && maxGrowthMiB !== null && delta > BigInt(maxGrowthMiB) * bytesPerMiB,
         ...(incomplete ? { incomplete: true } : {}),
+        ...(baselineGap ? { pathsHiddenByBaselineLinks: pathsHiddenByBaselineLinks.sort() } : {}),
     };
 }
