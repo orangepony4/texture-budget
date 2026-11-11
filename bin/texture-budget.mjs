@@ -216,7 +216,7 @@ async function main() {
         await writeOutput(reportLines(report));
     }
     return report.exceeded.edge.length || report.exceeded.images?.length || report.exceeded.total || report.invalid.length ||
-        report.baseline?.growthExceeded ? 1 : 0;
+        report.baseline?.growthExceeded || report.baseline?.incomplete ? 1 : 0;
 }
 
 try {

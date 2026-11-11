@@ -42,7 +42,7 @@ node bin/texture-budget.mjs assets --mipmaps --html > texture-report.html
 | Exit code | Meaning |
 | --- | --- |
 | `0` | Scan completed and the inspected images are within any supplied limits. |
-| `1` | At least one limit was exceeded or an image header could not be inspected. |
+| `1` | A limit was exceeded, an image header could not be inspected, or the baseline comparison is incomplete. |
 | `2` | The command or the folder could not be processed. |
 
 ## Track budget growth
@@ -58,9 +58,9 @@ In Windows PowerShell 5.1, write the baseline with `node bin/texture-budget.mjs 
 
 Both scans must use the same mipmap mode. The baseline must contain no invalid or unreadable images. Its stored RGBA8 estimates must match the image dimensions and mipmap mode. The comparison matches exact relative paths and lists added and removed images, changes in estimated bytes, and total growth. A growth limit of `0` allows no increase. Without a growth limit, differences are reported without failing the check. Use `--json` or `--html` to save the comparison.
 
-If the current scan finds unreadable images, the comparison reports an estimate based on readable images and adds `baseline.incomplete: true` to JSON. Unreadable paths stay under scan issues and are excluded from the removal list. The scan exits with code `1`.
+If the current scan finds unreadable images or a skipped link covers a path in the baseline, the comparison reports an estimate based on readable images and adds `baseline.incomplete: true` to JSON. The affected paths stay out of the removal list, and the report lists unreadable images and skipped links under scan issues. The scan exits with code `1`.
 
-Если при текущей проверке некоторые изображения не читаются, сравнение использует оценку по читаемым изображениям и добавляет в JSON `baseline.incomplete: true`. Пути нечитаемых файлов отображаются среди ошибок проверки и исключаются из списка удалённых. Код завершения проверки — `1`.
+Если при текущей проверке изображение недоступно для чтения или путь из базового отчёта закрыт пропущенной ссылкой, сравнение учитывает только читаемые изображения и добавляет в JSON `baseline.incomplete: true`. Такие пути не считаются удалёнными. В отчёте отображаются нечитаемые изображения и пропущенные ссылки. Код завершения проверки — `1`.
 
 ## Find the most expensive folders
 

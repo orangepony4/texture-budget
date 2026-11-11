@@ -17,6 +17,15 @@ function isImageDimension(value) {
     return Number.isInteger(value) && value >= 1 && value <= MAX_IMAGE_DIMENSION;
 }
 
+function hasSkippedLink(path, skippedLinks) {
+    let end = path.length;
+    while (end > 0) {
+        if (skippedLinks.has(path.slice(0, end))) return true;
+        end = path.lastIndexOf('/', end - 1);
+    }
+    return false;
+}
+
 function readBaseline(report, mipmaps) {
     if (!isRecord(report) || typeof report.mipmaps !== 'boolean'
         || !Array.isArray(report.files) || !isRecord(report.totals) || !Array.isArray(report.invalid)) {
@@ -80,15 +89,23 @@ export function compareBudgetBaseline(previous, current, { maxGrowthMiB = null }
     const invalid = current.invalid ?? [];
     for (const { path } of invalid) remaining.delete(path);
 
+    const skippedLinks = new Set(current.skippedLinks ?? []);
+    let incomplete = invalid.length > 0;
+    const removed = [];
+    for (const path of remaining.keys()) {
+        if (skippedLinks.size && hasSkippedLink(path, skippedLinks)) incomplete = true;
+        else removed.push(path);
+    }
+
     const delta = currentTotal - previousTotal;
     return {
         previousRgbaBytes: previousTotal.toString(),
         deltaRgbaBytes: delta.toString(),
         added: added.sort(),
-        removed: [...remaining.keys()].sort(),
+        removed: removed.sort(),
         changed: changed.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
         maxGrowthMiB,
         growthExceeded: maxGrowthMiB !== null && delta > BigInt(maxGrowthMiB) * bytesPerMiB,
-        ...(invalid.length > 0 ? { incomplete: true } : {}),
+        ...(incomplete ? { incomplete: true } : {}),
     };
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
@@ -340,4 +340,53 @@ test('the Action keeps a JSON report and explains an incomplete baseline check',
     assert.deepEqual(damaged.json.baseline.removed, []);
     assert.deepEqual(damaged.json.invalid.map(file => file.path), ['atlas.jpg']);
     assert.match(damaged.stderr, /Baseline comparison is incomplete\. The current estimate includes readable images only\./);
+});
+
+test('keeps baseline images blocked by skipped links separate from true removals', async t => {
+    const { baseline, directory, folder, put, run } = await fixture(t);
+    const nested = join(folder, 'sprites');
+    const outside = join(directory, 'outside');
+    await mkdir(nested);
+    await mkdir(outside);
+    await put('sprites/atlas.jpg', 512, 512);
+    await put('sprites-extra.jpg', 1, 1);
+    await put('top.jpg', 2, 2);
+    await writeFile(baseline, run(0));
+
+    const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+    try {
+        await symlink(outside, join(folder, 'untracked'), linkType);
+    } catch (error) {
+        if (['EACCES', 'EPERM', 'ENOSYS', 'ENOTSUP', 'EOPNOTSUPP'].includes(error.code)) {
+            t.skip(`Link creation is unavailable (${error.code})`);
+            return;
+        }
+        throw error;
+    }
+    const flags = ['--baseline', baseline, '--max-growth-mib', '0'];
+    const unrelated = JSON.parse(run(0, ...flags));
+    assert.deepEqual(unrelated.skippedLinks, ['untracked']);
+    assert.equal(Object.hasOwn(unrelated.baseline, 'incomplete'), false);
+
+    await rename(nested, join(outside, 'sprites'));
+    await rename(join(folder, 'top.jpg'), join(outside, 'top.jpg'));
+    await symlink(join(outside, 'sprites'), nested, linkType);
+    await symlink(outside, join(folder, 'top.jpg'), linkType);
+    await rm(join(folder, 'sprites-extra.jpg'));
+
+    const scan = JSON.parse(run(0));
+    assert.deepEqual(scan.skippedLinks, ['sprites', 'top.jpg', 'untracked']);
+    const compared = JSON.parse(run(1, ...flags));
+    assert.deepEqual(compared.skippedLinks, scan.skippedLinks);
+    assert.deepEqual(compared.invalid, []);
+    assert.equal(compared.baseline.incomplete, true);
+    assert.equal(compared.baseline.growthExceeded, false);
+    assert.deepEqual(compared.baseline.removed, ['sprites-extra.jpg']);
+    assert.equal(JSON.parse(run(1, '--baseline', baseline)).baseline.incomplete, true);
+
+    const html = run(1, ...flags, '--html');
+    assert.match(html, /Comparison incomplete/);
+    assert.match(html, /Removed images \(1\)/);
+    assert.match(html, /Skipped links \(3\)/);
+    assert.doesNotMatch(html, /within budget/i);
 });

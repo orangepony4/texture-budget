@@ -76,7 +76,9 @@ async function main() {
                 throw new Error('The CLI produced an empty report.');
             }
             await appendFile(outputPath, `report-path=${reportPath}\nexit-code=${status}\n`, 'utf8');
-            if (status === 1) diagnostic('The scan reported budget violations or unreadable images. See the JSON report.');
+            if (status === 1) {
+                diagnostic('The scan reported budget violations, unreadable images, or an incomplete baseline comparison. See the JSON report.');
+            }
             return status;
         }
     } catch (error) {
